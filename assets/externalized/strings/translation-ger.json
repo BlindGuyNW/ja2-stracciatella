@@ -2136,6 +2136,13 @@
         "Spiel verlassen und zurück zum Hauptmenü?",
         "Sprachoption oder Untertitel müssen aktiviert sein."
     ],
+    "MainMenuFastHelp": [
+        "New Game",
+        "Load Game",
+        "Preferences",
+        "Credits",
+        "Quit"
+    ],
     "zOptionsToggleText": [
         "Sprache",
         "Stumme Bestätigungen",

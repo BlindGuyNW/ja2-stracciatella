@@ -201,6 +201,7 @@ extern FLOAT GetWeightBasedOnMetricOption( UINT32 uiObjectWeight );
 #define SkiMessageBoxText                                   (g_langRes->SkiMessageBoxText)
 #define zSaveLoadText                                       (g_langRes->zSaveLoadText)
 #define zOptionsText                                        (g_langRes->zOptionsText)
+#define MainMenuFastHelp                                    (g_langRes->MainMenuFastHelp)
 #define gzGIOScreenText                                     (g_langRes->gzGIOScreenText)
 #define gzHelpScreenText                                    (g_langRes->gzHelpScreenText)
 #define gzLaptopHelpText                                    (g_langRes->gzLaptopHelpText)

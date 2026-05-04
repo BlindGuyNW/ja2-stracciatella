@@ -2136,6 +2136,13 @@
         "Spel verlaten en terugkeren naar hoofdmenu?",
         "Je hebt of de Spraakoptie nodig of de ondertiteling."
     ],
+    "MainMenuFastHelp": [
+        "New Game",
+        "Load Game",
+        "Preferences",
+        "Credits",
+        "Quit"
+    ],
     "zOptionsToggleText": [
         "Spraak",
         "Bevestigingen uit",

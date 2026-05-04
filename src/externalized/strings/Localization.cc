@@ -240,6 +240,7 @@ L10n_t::L10n_t(SGPFile * const translationFile)
 	GetArray(SkiMessageBoxText);
 	GetArray(zSaveLoadText);
 	GetArray(zOptionsText);
+	GetArray(MainMenuFastHelp);
 	GetArray(gzGIOScreenText);
 	GetString(gzHelpScreenText);
 	GetArray(gzLaptopHelpText);

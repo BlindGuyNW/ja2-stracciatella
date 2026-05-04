@@ -2136,6 +2136,13 @@
         "Выйти из игры и вернуться в главное меню?",
         "Нужно выбрать либо РЕЧЬ, либо СУБТИТРЫ."
     ],
+    "MainMenuFastHelp": [
+        "New Game",
+        "Load Game",
+        "Preferences",
+        "Credits",
+        "Quit"
+    ],
     "zOptionsToggleText": [
         "Речь",
         "Заглушить отзывы",

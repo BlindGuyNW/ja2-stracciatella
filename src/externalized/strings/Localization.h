@@ -174,6 +174,7 @@ constexpr std::size_t str_stat_list_SIZE = 11;
 constexpr std::size_t str_aim_sort_list_SIZE = 8;
 constexpr std::size_t zNewTacticalMessages_SIZE = 7;
 constexpr std::size_t gs_dead_is_dead_mode_tab_name_SIZE = 2;
+constexpr std::size_t MainMenuFastHelp_SIZE = 5;
 
 constexpr std::size_t demarcationStrings_SIZE = 2;
 constexpr std::size_t booleanStrings_SIZE = 6;
@@ -422,6 +423,10 @@ struct L10n_t
 	STRARRAY(gs_dead_is_dead_mode_tab_name);
 
 	STRARRAY(gzIMPSkillTraitsText);
+
+	// Screen-reader tooltip text for the main menu's five buttons,
+	// indexed by the menu enum (NEW_GAME, LOAD_GAME, PREFERENCES, CREDITS, QUIT).
+	STRARRAY(MainMenuFastHelp);
 };
 
 struct L10n_tooltips

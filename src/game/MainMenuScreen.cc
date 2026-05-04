@@ -346,6 +346,9 @@ static void CreateDestroyMainMenuButtons(BOOLEAN fCreate)
 			GUIButtonRef const b = QuickCreateButton(img, x, y, MSYS_PRIORITY_HIGHEST, MenuButtonCallback);
 			iMenuButtons[cnt] = b;
 			b->SetUserData(cnt);
+			// Tooltip text — also serves as the screen-reader label since the
+			// menu's button images carry no text the engine can read out.
+			b->SetFastHelpText(MainMenuFastHelp[cnt]);
 		}
 
 		fButtonsCreated = TRUE;

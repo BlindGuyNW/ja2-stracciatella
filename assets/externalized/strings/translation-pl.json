@@ -2136,6 +2136,13 @@
         "Zakończyć grę i wrócić do głównego menu?",
         "Musisz włączyć opcję dialogów lub napisów."
     ],
+    "MainMenuFastHelp": [
+        "New Game",
+        "Load Game",
+        "Preferences",
+        "Credits",
+        "Quit"
+    ],
     "zOptionsToggleText": [
         "Dialogi",
         "Wycisz potwierdzenia",

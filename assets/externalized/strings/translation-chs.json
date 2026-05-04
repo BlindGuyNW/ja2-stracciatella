@@ -2136,6 +2136,13 @@
         "退出并回到游戏主菜单?",
         "您必须选择 '语音' 和 '对话显示' 中至少一项."
     ],
+    "MainMenuFastHelp": [
+        "New Game",
+        "Load Game",
+        "Preferences",
+        "Credits",
+        "Quit"
+    ],
     "zOptionsToggleText": [
         "语音",
         "确认静默",

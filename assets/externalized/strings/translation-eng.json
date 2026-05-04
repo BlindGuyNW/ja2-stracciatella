@@ -2136,6 +2136,13 @@
         "Quit game and return to the main menu?",
         "You need either the Speech option, or the Subtitle option to be enabled."
     ],
+    "MainMenuFastHelp": [
+        "New Game",
+        "Load Game",
+        "Preferences",
+        "Credits",
+        "Quit"
+    ],
     "zOptionsToggleText": [
         "Speech",
         "Mute Confirmations",

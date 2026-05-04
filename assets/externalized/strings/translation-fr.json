@@ -2136,6 +2136,13 @@
         "Quitter la partie et revenir au menu principal ?",
         "Activez le mode Dialogue ou Sous-titre."
     ],
+    "MainMenuFastHelp": [
+        "New Game",
+        "Load Game",
+        "Preferences",
+        "Credits",
+        "Quit"
+    ],
     "zOptionsToggleText": [
         "Dialogue",
         "Confirmations muettes",

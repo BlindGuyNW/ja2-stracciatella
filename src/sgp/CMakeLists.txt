@@ -1,5 +1,6 @@
 file(GLOB LOCAL_JA2_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
 set(LOCAL_JA2_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/Accessibility.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Button_Sound_Control.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Button_System.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Cursor_Control.cc

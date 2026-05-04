@@ -11,6 +11,7 @@
 //
 //=================================================================================================
 
+#include "Accessibility.h"
 #include "Font.h"
 #include "HImage.h"
 #include "Types.h"
@@ -443,6 +444,14 @@ static void MSYS_UpdateMouseRegion(void)
 				{
 					cur->MovementCallback(cur, MSYS_CALLBACK_REASON_GAIN_MOUSE);
 				}
+			}
+
+			// Speak the region's tooltip text via the accessibility channel.
+			// interrupt=true means a fast sweep across multiple regions only
+			// finishes the final one — earlier announcements get cancelled.
+			if ((cur->uiFlags & MSYS_REGION_ENABLED) && !cur->FastHelpText.empty())
+			{
+				AX_Say(ST::string(cur->FastHelpText));
 			}
 
 			// if the cursor is set and is not set to no cursor

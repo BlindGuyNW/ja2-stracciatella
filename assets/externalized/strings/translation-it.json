@@ -2136,6 +2136,13 @@
         "Volete terminare la partita e tornare al menu principale?",
         "Avete bisogno dell'opzione 'Parlato' o di quella 'Sottotitoli' per poter giocare."
     ],
+    "MainMenuFastHelp": [
+        "New Game",
+        "Load Game",
+        "Preferences",
+        "Credits",
+        "Quit"
+    ],
     "zOptionsToggleText": [
         "Parlato",
         "Conferme mute",
