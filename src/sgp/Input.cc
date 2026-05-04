@@ -330,7 +330,6 @@ static void KeyChange(SDL_Keysym const* const key_sym, bool const pressed)
 {
 	SDL_Keycode      key = key_sym->sym;
 	SDL_Keymod const mod = (SDL_Keymod) key_sym->mod;
-	bool   const num = mod & KMOD_NUM;
 
 	// Special handling for some keys which often are used for different
 	// purposes for many keyboard layouts compared to the US keyboard layout
@@ -360,20 +359,11 @@ static void KeyChange(SDL_Keysym const* const key_sym, bool const pressed)
 		case SDLK_F4: return;
 #endif
 
-		case SDLK_KP_0:         key = num ? SDLK_0      : SDLK_INSERT;   break;
-		case SDLK_KP_1:         key = num ? SDLK_1      : SDLK_END;      break;
-		case SDLK_KP_2:         key = num ? SDLK_2      : SDLK_DOWN;     break;
-		case SDLK_KP_3:         key = num ? SDLK_3      : SDLK_PAGEDOWN; break;
-		case SDLK_KP_4:         key = num ? SDLK_4      : SDLK_LEFT;     break;
-		case SDLK_KP_5:
-			if (!num) return;
-			key = SDLK_5;
-			break;
-		case SDLK_KP_6:         key = num ? SDLK_6      : SDLK_RIGHT;    break;
-		case SDLK_KP_7:         key = num ? SDLK_7      : SDLK_HOME;     break;
-		case SDLK_KP_8:         key = num ? SDLK_8      : SDLK_UP;       break;
-		case SDLK_KP_9:         key = num ? SDLK_9      : SDLK_PAGEUP;   break;
-		case SDLK_KP_PERIOD:   key = num ? SDLK_PERIOD : SDLK_DELETE;   break;
+		// Numpad digits and period are not folded into their digit/navigation
+		// equivalents — accessibility code claims SDLK_KP_1..9 as a dedicated
+		// virtual-cursor cluster regardless of NumLock state. Operator keys
+		// (KP_DIVIDE/MULTIPLY/MINUS/PLUS/ENTER) are still folded so that
+		// numpad and main-keyboard versions stay interchangeable.
 		case SDLK_KP_DIVIDE:   key = SDLK_SLASH;                        break;
 		case SDLK_KP_MULTIPLY: key = SDLK_ASTERISK;                     break;
 		case SDLK_KP_MINUS:    key = SDLK_MINUS;                        break;

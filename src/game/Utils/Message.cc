@@ -1,3 +1,4 @@
+#include "Accessibility.h"
 #include "Buffer.h"
 #include "Debug.h"
 #include "Directories.h"
@@ -298,6 +299,8 @@ static void TacticalScreenMsg(UINT16 usColor, UINT8 ubPriority, const ST::string
 // new screen message
 void ScreenMsg(UINT16 usColor, UINT8 ubPriority, const ST::string& str)
 {
+	AX_Say(str, /*interrupt=*/false);
+
 	// pass onto tactical message and mapscreen message
 	TacticalScreenMsg(usColor, ubPriority, str);
 	MapScreenMessage(usColor, ubPriority, str);
