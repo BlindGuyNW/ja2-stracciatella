@@ -1,0 +1,109 @@
+#include "Console.h"
+
+#include "Logger.h"
+
+#include <atomic>
+#include <iostream>
+#include <mutex>
+#include <queue>
+#include <string>
+#include <thread>
+#include <utility>
+
+#ifdef _WIN32
+#	define WIN32_LEAN_AND_MEAN
+#	include <windows.h>
+#endif
+
+namespace
+{
+	std::mutex              g_inbox_mutex;
+	std::queue<std::string> g_inbox;
+
+	std::mutex              g_out_mutex;
+
+	std::atomic<bool>       g_running{false};
+	std::thread             g_reader;
+
+	void readerLoop()
+	{
+		std::string line;
+		// Block on stdin. std::getline returns false on EOF (stdin closed,
+		// e.g. console killed, ja2 shutting down). Either way the thread
+		// exits cleanly.
+		while (std::getline(std::cin, line))
+		{
+			if (!g_running.load(std::memory_order_relaxed)) break;
+			if (!line.empty() && line.back() == '\r') line.pop_back();
+			if (line.empty()) continue;
+			std::lock_guard<std::mutex> lock(g_inbox_mutex);
+			g_inbox.push(std::move(line));
+			line.clear();
+		}
+	}
+}
+
+void Console_Init(void)
+{
+	if (g_running.exchange(true)) return;
+
+#ifdef _WIN32
+	// InitGlobalLocale earlier set ENABLE_EXTENDED_FLAGS only on the
+	// console input handle, which disables line-mode reads. Restore the
+	// flags getline expects, while keeping quick-edit off (selecting text
+	// in quick-edit mode would block the engine on stdin reads).
+	HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+	if (hIn != NULL && hIn != INVALID_HANDLE_VALUE)
+	{
+		SetConsoleMode(hIn,
+			ENABLE_LINE_INPUT      |
+			ENABLE_ECHO_INPUT      |
+			ENABLE_PROCESSED_INPUT |
+			ENABLE_EXTENDED_FLAGS);
+	}
+	SetConsoleTitleW(L"Jagged Alliance 2 \xE2\x80\x94 accessibility console");
+#endif
+
+	{
+		std::lock_guard<std::mutex> lock(g_out_mutex);
+		std::cout
+			<< "JA2 accessibility console. Type 'help' for commands."
+			<< std::endl;
+	}
+
+	SLOGI("Accessibility console started.");
+	g_reader = std::thread(readerLoop);
+}
+
+void Console_Shutdown(void)
+{
+	if (!g_running.exchange(false)) return;
+	// The reader is blocked on stdin and will exit when stdin closes
+	// during process teardown. Detach so we don't deadlock waiting for
+	// it; static mutexes outlive the thread by virtue of being static.
+	if (g_reader.joinable()) g_reader.detach();
+}
+
+std::size_t Console_Drain(const std::function<void(const std::string&)>& handler)
+{
+	if (!handler) return 0;
+	std::queue<std::string> local;
+	{
+		std::lock_guard<std::mutex> lock(g_inbox_mutex);
+		std::swap(local, g_inbox);
+	}
+	std::size_t n = local.size();
+	while (!local.empty())
+	{
+		handler(local.front());
+		local.pop();
+	}
+	return n;
+}
+
+void Console_Println(const ST::string& line)
+{
+	std::lock_guard<std::mutex> lock(g_out_mutex);
+	std::cout << line.c_str() << '\n';
+	std::cout.flush();
+}

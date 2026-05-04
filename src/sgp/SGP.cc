@@ -1,5 +1,7 @@
 #include "Accessibility.h"
 #include "Button_System.h"
+#include "Console.h"
+#include "Console_Dispatch.h"
 #include "FPS.h"
 #include "GameLoop.h"
 #include "GameSettings.h"
@@ -89,6 +91,7 @@ static void shutdownGame()
 	SLOGD("Shutting Down SDL");
 	SDL_Quit();
 
+	Console_Shutdown();
 	AX_Shutdown();
 }
 
@@ -124,6 +127,11 @@ static void MainLoop()
 		// cycle until SDL_Quit is received
 		extern void UpdateJA2Clock();
 		UpdateJA2Clock();
+
+		// Drain console commands once per loop iteration. Cheap when the
+		// queue is empty; runs even on background frames so the user can
+		// still issue commands while the SDL window doesn't have focus.
+		ConsoleDispatch_Tick();
 
 		SDL_Event event;
 		if (SDL_PollEvent(&event))
@@ -364,6 +372,11 @@ int main(int argc, char* argv[])
 		// the rest of init, so any future startup narration has a route.
 		AX_Init();
 		AX_Say("Jagged Alliance 2 starting.");
+
+		// Start the screen-reader command console (separate stdin reader
+		// thread; engine state is touched only from this game thread via
+		// ConsoleDispatch_Tick during the main loop).
+		Console_Init();
 
 		// restore output to the console (on windows when built with MINGW)
 	#ifdef __MINGW32__

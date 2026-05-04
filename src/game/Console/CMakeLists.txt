@@ -1,0 +1,11 @@
+file(GLOB LOCAL_JA2_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
+set(JA2_SOURCES
+    ${JA2_SOURCES}
+    ${LOCAL_JA2_HEADERS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Action.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Address.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Dispatch.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Query.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Visibility.cc
+    PARENT_SCOPE
+)
