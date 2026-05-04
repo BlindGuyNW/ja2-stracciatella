@@ -58,6 +58,7 @@
 #include "GameSettings.h"
 #include "Vehicles.h"
 #include "SaveLoadScreen.h"
+#include "Accessibility.h"
 #include "Meanwhile.h"
 #include "Text.h"
 #include "Inventory_Choosing.h"
@@ -2382,6 +2383,34 @@ void GetKeyboardInput(UIEventKind* const puiNewEvent)
 			}
 
 			if (gubCheatLevel < cheatCode.size()) RESET_CHEAT_LEVEL();
+
+			// Screen-reader command intercept. Bare backslash is unbound in
+			// tactical/mapscreen/laptop, so we claim it before the modifier
+			// dispatch below.
+			if (key == SDLK_BACKSLASH && mod == 0)
+			{
+				SOLDIERTYPE const* const sel = GetSelectedMan();
+				if (!sel)
+				{
+					AX_Say(ST::string("No merc selected"));
+				}
+				else
+				{
+					static char const* const dir_names[NUM_WORLD_DIRECTIONS] = {
+						"north", "northeast", "east", "southeast",
+						"south", "southwest", "west", "northwest"
+					};
+					UINT8 const dir = sel->bDirection < NUM_WORLD_DIRECTIONS
+						? sel->bDirection : 0;
+					AX_Say(ST::format(
+						"{}. Life {}, breath {}, action points {}. Tile {} facing {}. {}",
+						sel->name,
+						sel->bLife, sel->bBreath, sel->bActionPoints,
+						sel->sGridNo, dir_names[dir],
+						GetSectorIDString(gWorldSector, FALSE)));
+				}
+				continue;
+			}
 
 			switch (mod)
 			{
