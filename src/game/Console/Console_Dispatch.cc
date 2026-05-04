@@ -1,5 +1,6 @@
 #include "Console_Dispatch.h"
 #include "Console_Action.h"
+#include "Console_Gui.h"
 #include "Console_Query.h"
 
 #include "Console.h"
@@ -40,6 +41,7 @@ namespace
 		{ "stance",    &Cmd_Stance,     "stance <p|c|s> — prone / crouch / stand"                },
 		{ "fire",      &Cmd_Fire,       "fire <count> <target>"                                  },
 		{ "end-turn",  &Cmd_EndTurn,    "end-turn"                                               },
+		{ "g",         &Cmd_Gui,        "g list | g click <id> — enumerate or click visible buttons" },
 	};
 
 	void cmdHelp(const ArgList&)
