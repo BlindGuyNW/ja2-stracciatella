@@ -10,6 +10,7 @@
 
 void Cmd_Select  (const std::vector<std::string>& args);
 void Cmd_Move    (const std::vector<std::string>& args);
+void Cmd_MoveAll (const std::vector<std::string>& args);
 void Cmd_Turn    (const std::vector<std::string>& args);
 void Cmd_Stance  (const std::vector<std::string>& args);
 void Cmd_Fire    (const std::vector<std::string>& args);

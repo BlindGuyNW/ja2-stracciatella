@@ -7,8 +7,10 @@
 #include "ContentManager.h"
 #include "GameInstance.h"
 #include "GameScreen.h"
+#include "Handle_Doors.h"
 #include "Handle_Items.h"
 #include "Handle_UI.h"
+#include "Interactive_Tiles.h"
 #include "Interface.h"
 #include "Isometric_Utils.h"
 #include "ItemModel.h"
@@ -16,7 +18,12 @@
 #include "Overhead.h"
 #include "Overhead_Types.h"
 #include "Points.h"
+#include "Soldier.h"
 #include "Soldier_Control.h"
+#include "Soldier_Macros.h"
+#include "Squads.h"
+#include "Structure.h"
+#include "Structure_Internals.h"
 #include "WorldDef.h"
 
 #include <cctype>
@@ -224,6 +231,21 @@ void Cmd_Turn(const std::vector<std::string>& args)
 	}
 }
 
+namespace
+{
+	// Mirrors the realtime branch of UIHandleCMoveMerc (Handle_UI.cc:1700):
+	// in real time, the click handler refreshes usUIMovementMode based on
+	// current stance every time a move is issued (prone→crawl, crouch→swat,
+	// stand→walk-or-run-by-fast-flag). Combat preserves whatever was set so
+	// AP cost resolves against the chosen mode.
+	void refreshMoveModeForRealtime(SOLDIERTYPE* s)
+	{
+		if (gTacticalStatus.uiFlags & INCOMBAT) return;
+		s->usUIMovementMode = GetMoveStateBasedOnStance(
+			s, gAnimControl[s->usAnimState].ubEndHeight);
+	}
+}
+
 void Cmd_Move(const std::vector<std::string>& args)
 {
 	SOLDIERTYPE* const sel = GetSelectedMan();
@@ -251,7 +273,53 @@ void Cmd_Move(const std::vector<std::string>& args)
 		return;
 	}
 
-	EVENT_GetNewSoldierPath(sel, static_cast<UINT16>(tgt.gridno), sel->usUIMovementMode);
+	refreshMoveModeForRealtime(sel);
+	Soldier{sel}.removePendingAction();
+
+	// If the destination tile carries an openable structure (door, locker,
+	// switch), don't try to walk onto it — find an adjacent approach tile
+	// and queue the open/interact for arrival. Mirrors Handle_UI.cc:1708.
+	INT16      destGridNo  = tgt.gridno;
+	STRUCTURE* intStruct   = FindStructure(tgt.gridno, STRUCTURE_OPENABLE);
+	UINT8      intDir      = sel->bDirection;
+	bool       willInteract = false;
+
+	if (intStruct)
+	{
+		const INT16 approach = (intStruct->fFlags & (STRUCTURE_ANYDOOR | STRUCTURE_SWITCH))
+			? FindAdjacentGridExAdvanced(sel, *intStruct, tgt.gridno, &intDir)
+			: FindAdjacentGridEx(sel, tgt.gridno, &intDir, nullptr, FALSE, TRUE);
+
+		if (approach == -1)
+		{
+			Console_Println("No path to that structure.");
+			return;
+		}
+		destGridNo   = approach;
+		willInteract = true;
+
+		// Already adjacent — interact immediately, no path needed. Mirrors
+		// the same-tile shortcut in Handle_UI.cc:1729.
+		if (sel->sGridNo == approach)
+		{
+			StartInteractiveObject(tgt.gridno, *intStruct, *sel, intDir);
+			InteractWithOpenableStruct(*sel, *intStruct, intDir);
+			Console_Println("Interacting.");
+			return;
+		}
+	}
+
+	EVENT_InternalGetNewSoldierPath(sel, static_cast<UINT16>(destGridNo),
+	                                sel->usUIMovementMode, TRUE,
+	                                sel->fNoAPToFinishMove);
+
+	if (willInteract)
+	{
+		// Pending action fires when the merc reaches the approach tile.
+		StartInteractiveObject(tgt.gridno, *intStruct, *sel, intDir);
+		Console_Println("Approaching to interact.");
+		return;
+	}
 
 	if (tgt.soldier)
 	{
@@ -261,6 +329,80 @@ void Cmd_Move(const std::vector<std::string>& args)
 	{
 		Console_Println("Moving.");
 	}
+}
+
+void Cmd_MoveAll(const std::vector<std::string>& args)
+{
+	if (gTacticalStatus.uiFlags & INCOMBAT)
+	{
+		Console_Println("move-all only works in real time. In combat, move each merc individually.");
+		return;
+	}
+
+	SOLDIERTYPE* const sel = GetSelectedMan();
+	if (!sel)
+	{
+		Console_Println("No merc selected to anchor 'move-all' on.");
+		return;
+	}
+	if (args.size() < 2)
+	{
+		Console_Println("usage: move-all <name> | move-all <dir> <steps> | move-all <col,row>");
+		return;
+	}
+
+	Target tgt;
+	ST::string err;
+	if (parseTarget(args, 1, sel, tgt, err) == 0)
+	{
+		Console_Println(err);
+		return;
+	}
+
+	const INT32 squad = CurrentSquad();
+	if (squad == NO_CURRENT_SQUAD)
+	{
+		Console_Println("No active squad.");
+		return;
+	}
+
+	// Mirrors the group-move branch of UIHandleCMoveMerc (Handle_UI.cc:1640).
+	// Path-through-people lets squadmates resolve through one another instead
+	// of blocking on the leader's tile when they all start clustered.
+	gfGetNewPathThroughPeople = TRUE;
+
+	int moved = 0;
+	int skipped = 0;
+	FOR_EACH_IN_TEAM(s, OUR_TEAM)
+	{
+		if (!OK_CONTROLLABLE_MERC(s))     { ++skipped; continue; }
+		if (s->bAssignment != squad)      continue;
+		if (s->fMercAsleep)               { ++skipped; continue; }
+		if (s->uiStatusFlags & SOLDIER_ROBOT && !CanRobotBeControlled(s))
+		                                  { ++skipped; continue; }
+
+		AdjustNoAPToFinishMove(s, FALSE);
+		s->fUIMovementFast  = FALSE;
+		s->usUIMovementMode = GetMoveStateBasedOnStance(
+			s, gAnimControl[s->usAnimState].ubEndHeight);
+
+		Soldier{s}.removePendingAction();
+
+		if (EVENT_InternalGetNewSoldierPath(s, static_cast<UINT16>(tgt.gridno),
+		                                    s->usUIMovementMode, TRUE, FALSE))
+		{
+			++moved;
+		}
+		else
+		{
+			++skipped;
+		}
+	}
+
+	gfGetNewPathThroughPeople = FALSE;
+
+	Console_Println(ST::format("Group move queued: {} moving, {} skipped.",
+	                           moved, skipped));
 }
 
 void Cmd_Fire(const std::vector<std::string>& args)
