@@ -5,6 +5,7 @@
 #include "Console.h"
 
 #include "Animation_Control.h"
+#include "CalibreModel.h"
 #include "ContentManager.h"
 #include "Exit_Grids.h"
 #include "GameInstance.h"
@@ -16,6 +17,7 @@
 #include "Item_Types.h"
 #include "Keys.h"
 #include "LOS.h"
+#include "MagazineModel.h"
 #include "Map_Edgepoints.h"
 #include "Map_Information.h"
 #include "OppList.h"
@@ -1204,9 +1206,191 @@ void Cmd_Cth(const std::vector<std::string>& args)
 	Console_Println(ST::format("CTH on {}:  {}", label, cells));
 }
 
-void Cmd_Inventory(const std::vector<std::string>&)
+namespace
 {
-	Console_Println("inventory: not implemented yet.");
+	const char* slotLabel(int slot)
+	{
+		switch (slot)
+		{
+			case HELMETPOS:     return "Helmet";
+			case VESTPOS:       return "Vest";
+			case LEGPOS:        return "Legs";
+			case HEAD1POS:      return "Head 1";
+			case HEAD2POS:      return "Head 2";
+			case HANDPOS:       return "In hand";
+			case SECONDHANDPOS: return "Off hand";
+			case BIGPOCK1POS:   return "Big pocket 1";
+			case BIGPOCK2POS:   return "Big pocket 2";
+			case BIGPOCK3POS:   return "Big pocket 3";
+			case BIGPOCK4POS:   return "Big pocket 4";
+			case SMALLPOCK1POS: return "Small pocket 1";
+			case SMALLPOCK2POS: return "Small pocket 2";
+			case SMALLPOCK3POS: return "Small pocket 3";
+			case SMALLPOCK4POS: return "Small pocket 4";
+			case SMALLPOCK5POS: return "Small pocket 5";
+			case SMALLPOCK6POS: return "Small pocket 6";
+			case SMALLPOCK7POS: return "Small pocket 7";
+			case SMALLPOCK8POS: return "Small pocket 8";
+		}
+		return "?";
+	}
+
+	int sumMagShots(const OBJECTTYPE& o)
+	{
+		const int n = std::max<int>(1, o.ubNumberOfObjects);
+		int total = 0;
+		for (int i = 0; i < n && i < MAX_OBJECTS_PER_SLOT; ++i) total += o.ubShotsLeft[i];
+		return total;
+	}
+
+	ST::string formatGun(const OBJECTTYPE& o)
+	{
+		const WeaponModel* const w = GCM->getWeapon(o.usItem);
+		const ST::string cal = w->calibre ? w->calibre->getName() : ST::string();
+		const int pct = o.bGunStatus;
+		if (!cal.empty())
+		{
+			return ST::format("{}, {}, {}/{} shots, {}%",
+			                  itemName(o.usItem), cal,
+			                  o.ubGunShotsLeft, w->ubMagSize, pct);
+		}
+		return ST::format("{}, {}/{} shots, {}%",
+		                  itemName(o.usItem),
+		                  o.ubGunShotsLeft, w->ubMagSize, pct);
+	}
+
+	ST::string formatMagazine(const OBJECTTYPE& o)
+	{
+		const MagazineModel* const m = GCM->getItem(o.usItem)->asAmmo();
+		const ST::string cal = (m && m->calibre) ? m->calibre->getName() : ST::string();
+		const UINT16 cap = m ? m->capacity : 0;
+		const int n = std::max<int>(1, o.ubNumberOfObjects);
+		if (n == 1)
+		{
+			return cal.empty()
+				? ST::format("{}, {}/{} rounds", itemName(o.usItem), o.ubShotsLeft[0], cap)
+				: ST::format("{}, {}/{} ({})", itemName(o.usItem), o.ubShotsLeft[0], cap, cal);
+		}
+		const int total = sumMagShots(o);
+		return cal.empty()
+			? ST::format("{} x{}, {} rounds total", itemName(o.usItem), n, total)
+			: ST::format("{} x{}, {} rounds total ({})", itemName(o.usItem), n, total, cal);
+	}
+
+	ST::string formatGenericObject(const OBJECTTYPE& o)
+	{
+		const ItemModel* const it = GCM->getItem(o.usItem);
+		const int n = std::max<int>(1, o.ubNumberOfObjects);
+
+		if (it->isMoney())
+		{
+			return ST::format("${}", o.uiMoneyAmount);
+		}
+		if (n > 1)
+		{
+			return ST::format("{} x{}", itemName(o.usItem), n);
+		}
+		// Single non-stacked item: report condition for things that wear out.
+		if (it->isArmour() || it->isMedkit() || it->isKit() || it->isBlade() ||
+		    it->isPunch()  || it->isFace())
+		{
+			return ST::format("{}, {}%", itemName(o.usItem), o.bStatus[0]);
+		}
+		return itemName(o.usItem);
+	}
+
+	ST::string formatSlot(const OBJECTTYPE& o)
+	{
+		const ItemModel* const it = GCM->getItem(o.usItem);
+		if (it->isGun())  return formatGun(o);
+		if (it->isAmmo()) return formatMagazine(o);
+		return formatGenericObject(o);
+	}
+}
+
+void Cmd_Inventory(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* s = nullptr;
+	if (args.size() < 2)
+	{
+		s = GetSelectedMan();
+		if (!s) { Console_Println("No merc selected."); return; }
+	}
+	else
+	{
+		ST::string err;
+		s = findTeammateByName(args[1], err);
+		if (!s) { Console_Println(err); return; }
+	}
+
+	// Order: hands first (most actionable), then worn slots, then pockets.
+	static const int kSlotOrder[] =
+	{
+		HANDPOS, SECONDHANDPOS,
+		HELMETPOS, VESTPOS, LEGPOS, HEAD1POS, HEAD2POS,
+		BIGPOCK1POS, BIGPOCK2POS, BIGPOCK3POS, BIGPOCK4POS,
+		SMALLPOCK1POS, SMALLPOCK2POS, SMALLPOCK3POS, SMALLPOCK4POS,
+		SMALLPOCK5POS, SMALLPOCK6POS, SMALLPOCK7POS, SMALLPOCK8POS,
+	};
+
+	Console_Println(ST::format("{} inventory:", s->name));
+
+	int emptyCount = 0;
+	for (int slot : kSlotOrder)
+	{
+		const OBJECTTYPE& o = s->inv[slot];
+		if (o.usItem == 0) { ++emptyCount; continue; }
+		Console_Println(ST::format("  {}: {}", slotLabel(slot), formatSlot(o)));
+	}
+	if (emptyCount > 0)
+	{
+		Console_Println(ST::format("  ({} empty slot{}.)",
+		                           emptyCount, emptyCount == 1 ? "" : "s"));
+	}
+
+	// Reload-sources rollup: if the held weapon is a gun, scan every other
+	// slot for matching-calibre ammo and report total rounds available. The
+	// answer to "what can I reload with?" without the player having to
+	// cross-reference calibres slot by slot.
+	const OBJECTTYPE& held = s->inv[HANDPOS];
+	if (held.usItem == 0 || !GCM->getItem(held.usItem)->isGun()) return;
+
+	const WeaponModel* const w = GCM->getWeapon(held.usItem);
+	const CalibreModel* const wantCal = w->calibre;
+	if (!wantCal) return;
+
+	int        magCount   = 0;
+	int        totalShots = 0;
+	ST::string sources;
+	for (int slot : kSlotOrder)
+	{
+		if (slot == HANDPOS) continue;
+		const OBJECTTYPE& o = s->inv[slot];
+		if (o.usItem == 0) continue;
+		const ItemModel* const it = GCM->getItem(o.usItem);
+		if (!it->isAmmo()) continue;
+		const MagazineModel* const m = it->asAmmo();
+		if (!m || !m->calibre || m->calibre->index != wantCal->index) continue;
+
+		const int n         = std::max<int>(1, o.ubNumberOfObjects);
+		const int slotShots = sumMagShots(o);
+		magCount   += n;
+		totalShots += slotShots;
+		if (!sources.empty()) sources += ", ";
+		sources += ST::format("{} ({})", slotLabel(slot), slotShots);
+	}
+
+	if (magCount == 0)
+	{
+		Console_Println(ST::format("  No {} ammo on this merc.", wantCal->getName()));
+	}
+	else
+	{
+		Console_Println(ST::format("  Reload sources ({}): {} mag{}, {} rounds — {}.",
+		                           wantCal->getName(),
+		                           magCount, magCount == 1 ? "" : "s",
+		                           totalShots, sources));
+	}
 }
 
 void Cmd_Path(const std::vector<std::string>&)

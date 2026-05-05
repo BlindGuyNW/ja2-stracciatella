@@ -4,6 +4,7 @@
 #include "Console.h"
 
 #include "Animation_Control.h"
+#include "CalibreModel.h"
 #include "ContentManager.h"
 #include "GameInstance.h"
 #include "GameScreen.h"
@@ -15,6 +16,7 @@
 #include "Isometric_Utils.h"
 #include "ItemModel.h"
 #include "Item_Types.h"
+#include "Items.h"
 #include "Overhead.h"
 #include "Overhead_Types.h"
 #include "Points.h"
@@ -24,6 +26,7 @@
 #include "Squads.h"
 #include "Structure.h"
 #include "Structure_Internals.h"
+#include "WeaponModels.h"
 #include "WorldDef.h"
 
 #include <cctype>
@@ -492,5 +495,241 @@ void Cmd_Fire(const std::vector<std::string>& args)
 		case ITEM_HANDLE_NOROOM:              Console_Println("Can't fire from here.");         break;
 		case ITEM_HANDLE_REFUSAL:             Console_Println("Merc refused.");                 break;
 		default:                              Console_Println("Fire issued.");                  break;
+	}
+}
+
+void Cmd_Reload(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* s = nullptr;
+	if (args.size() < 2)
+	{
+		s = GetSelectedMan();
+		if (!s) { Console_Println("No merc selected."); return; }
+	}
+	else
+	{
+		ST::string err;
+		s = findTeammateByName(args[1], err);
+		if (!s) { Console_Println(err); return; }
+	}
+
+	OBJECTTYPE& hand = s->inv[HANDPOS];
+	if (hand.usItem == 0)
+	{
+		Console_Println(ST::format("{} has no weapon in hand.", s->name));
+		return;
+	}
+	const ItemModel* const item = GCM->getItem(hand.usItem);
+	if (!item->isGun())
+	{
+		Console_Println(ST::format("{}'s held item ({}) is not a gun.",
+		                           s->name, item->getName()));
+		return;
+	}
+	if (hand.usItem == ROCKET_LAUNCHER)
+	{
+		Console_Println("The LAW cannot be reloaded.");
+		return;
+	}
+
+	// Mirror what AutoReload would search for, so we can give a clear
+	// "no compatible ammo" message before any AP is spent. AutoReload's
+	// own slot search uses FindAmmoToReload (Items.cc:1429), so calling
+	// the same predicate here keeps the verdicts consistent.
+	if (FindAmmoToReload(s, HANDPOS, NO_SLOT) == NO_SLOT)
+	{
+		const WeaponModel* const w = GCM->getWeapon(hand.usItem);
+		const ST::string cal = (w && w->calibre)
+			? w->calibre->getName() : ST::string("compatible");
+		Console_Println(ST::format("No {} ammo on this merc.", cal));
+		return;
+	}
+
+	// AP preview — only relevant in combat. Outside combat the engine
+	// charges nothing for reloads (Items.cc:1096-1104), so don't gate the
+	// command on the merc's current AP pool when the turn-based flag is off.
+	const bool inCombat = (gTacticalStatus.uiFlags & INCOMBAT) != 0;
+	if (inCombat)
+	{
+		const INT8 apCost = GetAPsToAutoReload(s);
+		if (apCost > s->bActionPoints)
+		{
+			Console_Println(ST::format(
+				"{} needs {} AP to reload but has {}.",
+				s->name, apCost, s->bActionPoints));
+			return;
+		}
+	}
+
+	// Snapshot before/after for an unambiguous "0 → 30 shots" report.
+	// AutoReload itself drives ScreenMsg/sound side effects via ReloadGun,
+	// so the player still hears the chamber-action sound and sees any
+	// engine-issued status text.
+	const UINT8 shotsBefore = hand.ubGunShotsLeft;
+
+	if (!AutoReload(s))
+	{
+		Console_Println("Reload failed.");
+		return;
+	}
+
+	const UINT8 shotsAfter = hand.ubGunShotsLeft;
+	Console_Println(ST::format("Reloaded {}: {} → {} shots.",
+	                           item->getName(), shotsBefore, shotsAfter));
+	// Note: if the merc was dual-wielding the off-hand gun is also reloaded;
+	// AutoReload handles that itself. Inventory readout will reflect both.
+}
+
+void Cmd_Pickup(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const sel = GetSelectedMan();
+	if (!sel) { Console_Println("No merc selected."); return; }
+
+	// No arg: pick up at the merc's current tile (walked-onto-it case).
+	// Otherwise parse a target tile (compass+steps, col,row, or a known soldier
+	// — handy for "the tile that hostile is on" after they drop).
+	INT16 gridno = sel->sGridNo;
+	if (args.size() >= 2)
+	{
+		Target tgt;
+		ST::string err;
+		if (parseTarget(args, 1, sel, tgt, err) == 0) { Console_Println(err); return; }
+		gridno = tgt.gridno;
+	}
+
+	if (AM_AN_EPC(sel))
+	{
+		Console_Println(ST::format("{} is an escort and refuses to handle items.", sel->name));
+		return;
+	}
+
+	// Pre-check the item pool so we can give a clear "nothing here" message
+	// instead of the engine's silent BATTLE_SOUND_NOTHING grunt.
+	ITEM_POOL const* const pool = GetItemPool(gridno, sel->bLevel);
+	if (!pool || !IsItemPoolVisible(pool))
+	{
+		Console_Println("No visible items at that tile.");
+		return;
+	}
+
+	// Mirror the click handler at Turn_Based_Input.cc:3235-3238 and at
+	// Handle_UI.cc HandleMoveModeInteractiveClick:3326-3344. UIOkForItemPickup
+	// gates on path + AP and (on success) deducts the AP cost; SoldierPickupItem
+	// then sets up the pending pickup action and pathfinds.
+	//
+	// We pass ITEM_PICKUP_ACTION_ALL / ITEM_IGNORE_Z_LEVEL — same combo
+	// Interface_Dialogue.cc:3001 uses for the body-search "take all" button.
+	// This deliberately bypasses the multi-item pickup popup
+	// (Handle_Items.cc:1350 InitializeItemPickupMenu), which is a graphical
+	// menu we can't drive from the console.
+	if (!UIOkForItemPickup(sel, gridno))
+	{
+		Console_Println("Can't pick up: no path or not enough APs.");
+		return;
+	}
+
+	SoldierPickupItem(sel, ITEM_PICKUP_ACTION_ALL, gridno, ITEM_IGNORE_Z_LEVEL);
+
+	if (sel->sGridNo == gridno)
+	{
+		Console_Println("Picking up.");
+	}
+	else
+	{
+		const INT16 dist = PythSpacesAway(sel->sGridNo, gridno);
+		Console_Println(ST::format("Approaching {} tile{} to pick up.",
+		                           dist, dist == 1 ? "" : "s"));
+	}
+}
+
+void Cmd_Bandage(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const sel = GetSelectedMan();
+	if (!sel) { Console_Println("No merc selected."); return; }
+
+	// Default target = self (most common case: bandage yourself).
+	SOLDIERTYPE* patient = sel;
+	if (args.size() >= 2)
+	{
+		Target tgt;
+		ST::string err;
+		if (parseTarget(args, 1, sel, tgt, err) == 0) { Console_Println(err); return; }
+		if (!tgt.soldier)
+		{
+			Console_Println("Bandage target must be a soldier (name, mN, or eN).");
+			return;
+		}
+		patient = tgt.soldier;
+	}
+
+	// Refuse hostiles up front. EVENT_SoldierBeginFirstAid would refuse too
+	// (Soldier_Control.cc:6923) but we can give a clear, non-engine message.
+	if (patient->bTeam != OUR_TEAM && !patient->bNeutral)
+	{
+		Console_Println(ST::format("Cannot bandage {}: hostile.", patient->name));
+		return;
+	}
+
+	if (patient->bBleeding == 0 && patient->bLife >= patient->bLifeMax)
+	{
+		Console_Println(ST::format("{} doesn't need bandaging.", patient->name));
+		return;
+	}
+
+	// FIRSTAIDKIT and MEDICKIT both share IC_MEDKIT class. The engine
+	// treats them identically here — first aid kits stop bleeding faster
+	// per "kit point", medical kits also restore life. Either works.
+	const INT8 kitSlot = FindObjClass(sel, IC_MEDKIT);
+	if (kitSlot == NO_SLOT)
+	{
+		Console_Println(ST::format(
+			"{} has no first aid kit or medical kit.", sel->name));
+		return;
+	}
+
+	const UINT16 kitItem = sel->inv[kitSlot].usItem;
+
+	// HandlePlayerServices reads HANDPOS directly while the GIVING_AID
+	// animation plays (Overhead.cc:3841 OBJECTTYPE& in_hand = s.inv[HANDPOS]),
+	// so the kit must be in hand for the bandage to actually consume points
+	// and apply healing. Mirror the AI's swap-in pattern from Medical.cc:402.
+	//
+	// Caveat: outside autobandage mode the engine does *not* swap the
+	// previous hand item back when the bandage finishes. The displaced
+	// weapon ends up where the kit used to be — call `inventory` to see
+	// the new layout, and re-equip with whatever swap verbs we add later.
+	if (kitSlot != HANDPOS)
+	{
+		SwapObjs(&sel->inv[HANDPOS], &sel->inv[kitSlot]);
+		Console_Println(ST::format(
+			"Moved {} into main hand.", GCM->getItem(kitItem)->getName()));
+	}
+
+	const INT8 level = static_cast<INT8>(gsInterfaceLevel);
+	const ItemHandleResult r = HandleItem(sel, patient->sGridNo, level,
+	                                       kitItem, TRUE);
+
+	const ST::string who = (patient == sel) ? ST::string("self") : patient->name;
+	switch (r)
+	{
+		case ITEM_HANDLE_OK:
+			Console_Println(ST::format("Bandaging {}.", who));
+			break;
+		case ITEM_HANDLE_NOAPS:
+			Console_Println("Not enough APs to begin bandaging.");
+			break;
+		case ITEM_HANDLE_CANNOT_GETTO_LOCATION:
+			Console_Println(ST::format("Can't reach {}.", who));
+			break;
+		case ITEM_HANDLE_REFUSAL:
+			Console_Println(ST::format("{} refused first aid.", who));
+			break;
+		case ITEM_HANDLE_UNCONSCIOUS:
+			Console_Println(ST::format("{} is unconscious.", sel->name));
+			break;
+		default:
+			Console_Println(ST::format("Bandage issued (code {}).",
+			                           static_cast<int>(r)));
+			break;
 	}
 }
