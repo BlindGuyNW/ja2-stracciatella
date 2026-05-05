@@ -1,5 +1,6 @@
 #include "Accessibility.h"
 
+#include "AxLog.h"
 #include "Logger.h"
 
 #include <string_theory/string>
@@ -154,6 +155,10 @@ bool AX_IsAvailable(void)
 
 void AX_Say(const ST::string& text, bool interrupt)
 {
+	// Log even when Tolk isn't loaded — the "engine wanted to say X but
+	// nothing was heard" case is the more diagnostic one. Bounded by
+	// speech rate, so the volume is sane.
+	AX_LOG("[say{}] {}", interrupt ? " interrupt" : "", text);
 #ifdef _WIN32
 	if (!AX_IsAvailable()) return;
 	const std::wstring wide = widen(text.c_str());
@@ -166,6 +171,7 @@ void AX_Say(const ST::string& text, bool interrupt)
 
 void AX_Silence(void)
 {
+	AX_LOG("[silence]");
 #ifdef _WIN32
 	if (!AX_IsAvailable()) return;
 	p_Silence();

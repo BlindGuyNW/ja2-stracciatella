@@ -1,5 +1,6 @@
 #include "Console.h"
 
+#include "AxLog.h"
 #include "Logger.h"
 
 #include <atomic>
@@ -106,4 +107,9 @@ void Console_Println(const ST::string& line)
 	std::lock_guard<std::mutex> lock(g_out_mutex);
 	std::cout << line.c_str() << '\n';
 	std::cout.flush();
+	// Mirror the line into ja2-ax.log so a post-mortem (or a transcript
+	// the user shares) doesn't depend on the console window still being
+	// open. The dispatcher already echoes input as `> {line}`, so input
+	// lines round-trip through here too — one funnel, one logged copy.
+	AX_LOG("[console] {}", line);
 }

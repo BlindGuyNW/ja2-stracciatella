@@ -1,7 +1,5 @@
 #include "TextCapture.h"
 
-#include "AxLog.h"
-
 #include <algorithm>
 #include <utility>
 
@@ -34,8 +32,10 @@ void TextCapture_Reset(void)
 
 void TextCapture_Append(INT16 x, INT16 y, INT16 w, INT16 h, ST::string text)
 {
-	AX_LOG("capture \"{}\" at {},{} size {}x{} (codepoints={})",
-		text, x, y, w, h, text.size());
+	// No AX_LOG here — every MPrint funnels through this path, and the
+	// engine paints hundreds per frame. The snapshot is already queryable
+	// via TextCapture_Snapshot() (used by `r list`); a log mirror added
+	// 245k lines / 16 MB in an 11-minute session before this cut.
 
 	// Each MPrint call signals "this rect was just repainted on top of
 	// whatever was here before". Anything we have stored that overlaps
