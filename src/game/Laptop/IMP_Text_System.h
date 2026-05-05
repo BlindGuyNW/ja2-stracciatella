@@ -1,6 +1,15 @@
 #pragma once
 
+#include "EDT.h"
+
+#include <optional>
+
 void PrintImpText(void);
+
+// Loaded for the duration of the IMP web page (OpenIMPTexts/CloseIMPTexts).
+// Console_Imp reads question / answer prose directly out of this rather
+// than relying on the on-screen renderer.
+extern std::optional<EDTFile> gImpText;
 
 
 enum{

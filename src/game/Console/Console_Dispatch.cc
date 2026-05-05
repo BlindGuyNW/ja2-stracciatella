@@ -2,8 +2,11 @@
 #include "Console_Action.h"
 #include "Console_Email.h"
 #include "Console_Gui.h"
+#include "Console_Imp.h"
 #include "Console_Query.h"
 #include "Console_Rows.h"
+#include "Console_Text.h"
+#include "Console_Web.h"
 
 #include "Console.h"
 
@@ -49,6 +52,9 @@ namespace
 		{ "bandage",   &Cmd_Bandage,    "bandage [name] — apply a first aid kit (defaults to self)" },
 		{ "end-turn",  &Cmd_EndTurn,    "end-turn"                                               },
 		{ "email",     &Cmd_Email,      "email | email unread | email <id> — inbox (laptop only)" },
+		{ "imp",       &Cmd_Imp,        "imp [goto|name|nickname|gender|question|answer|confirm|prev|next|traits|trait|stats|stat|portrait|voice|done|hire]" },
+		{ "text",      &Cmd_Text,       "text | text <id> | text <id> <value> — read/write text input fields" },
+		{ "web",       &Cmd_Web,        "web | web <name> — list or open a bookmarked laptop site (laptop only)" },
 		{ "g",         &Cmd_Gui,        "g list | g click <id> — enumerate or click visible buttons" },
 		{ "r",         &Cmd_Rows,       "r list | r click <id> — enumerate or click rendered text rows" },
 	};

@@ -36,17 +36,20 @@
 #define ZERO_ATTRIBUTE_POINTS_VALUE (gamepolicy(imp_attribute_zero_bonus))
 #define BONUS_ATTRIBUTE_POINTS (gamepolicy(imp_attribute_bonus))
 
+// Local aliases for the public IMP_AttributeIndex enum in the header.
+// Names kept identical to the original file-private enum so the rest of
+// this file is unaffected.
 enum{
-	HEALTH_ATTRIBUTE,
-	DEXTERITY_ATTRIBUTE,
-	AGILITY_ATTRIBUTE,
-	STRENGTH_ATTRIBUTE,
-	WISDOM_ATTRIBUTE,
-	LEADERSHIP_ATTRIBUTE,
-	MARKSMANSHIP_SKILL,
-	EXPLOSIVE_SKILL,
-	MEDICAL_SKILL,
-	MECHANICAL_SKILL
+	HEALTH_ATTRIBUTE   = IMP_ATTR_HEALTH,
+	DEXTERITY_ATTRIBUTE = IMP_ATTR_DEXTERITY,
+	AGILITY_ATTRIBUTE   = IMP_ATTR_AGILITY,
+	STRENGTH_ATTRIBUTE  = IMP_ATTR_STRENGTH,
+	WISDOM_ATTRIBUTE    = IMP_ATTR_WISDOM,
+	LEADERSHIP_ATTRIBUTE = IMP_ATTR_LEADERSHIP,
+	MARKSMANSHIP_SKILL  = IMP_ATTR_MARKSMANSHIP,
+	EXPLOSIVE_SKILL     = IMP_ATTR_EXPLOSIVES,
+	MEDICAL_SKILL       = IMP_ATTR_MEDICAL,
+	MECHANICAL_SKILL    = IMP_ATTR_MECHANICAL
 };
 
 
@@ -67,6 +70,11 @@ static INT32 iCurrentStatAtZero = 0;
 
 // total number of bonus points
 static INT32 iCurrentBonusPoints = 40;
+
+INT32 GetIMPCurrentBonusPoints(void)
+{
+	return iCurrentBonusPoints;
+}
 
 // diplsay the 0 skill point warning..if skill set to 0, warn character
 static BOOLEAN fSkillAtZeroWarning = FALSE;
@@ -172,9 +180,6 @@ void ExitIMPAttributeSelection(void)
 }
 
 
-static void DecrementStat(INT32 iStatToDecrement);
-static INT32 GetCurrentAttributeValue(INT32 iAttribute);
-static void IncrementStat(INT32 iStatToIncrement);
 static void ProcessAttributes(void);
 static void StatAtZeroBoxCallBack(MessageBoxReturnValue);
 
@@ -307,7 +312,7 @@ static void ProcessAttributes(void)
 }
 
 
-static void IncrementStat(INT32 iStatToIncrement)
+void IncrementStat(INT32 iStatToIncrement)
 {
 	// review mode, do not allow changes
 	if (fReviewStats) return;
@@ -348,7 +353,7 @@ static void IncrementStat(INT32 iStatToIncrement)
 }
 
 
-static void DecrementStat(INT32 iStatToDecrement)
+void DecrementStat(INT32 iStatToDecrement)
 {
 	// review mode, do not allow changes
 	if (fReviewStats) return;
@@ -706,7 +711,7 @@ static void SliderRegionButtonCallback(MOUSE_REGION* pRegion, UINT32 iReason)
 
 
 // Get the value of the attribute that was passed
-static INT32 GetCurrentAttributeValue(INT32 attribute)
+INT32 GetCurrentAttributeValue(INT32 attribute)
 {
 	INT32 val = 0;
 	switch (attribute)

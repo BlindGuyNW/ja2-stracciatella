@@ -111,7 +111,7 @@ void HandleIMPVoices( void )
 }
 
 
-static void IncrementVoice(void)
+void IncrementVoice(void)
 {
 	// cycle to next voice
 	iCurrentVoices++;
@@ -124,7 +124,7 @@ static void IncrementVoice(void)
 }
 
 
-static void DecrementVoice(void)
+void DecrementVoice(void)
 {
 	// cycle to previous voice
 	iCurrentVoices--;
@@ -296,6 +296,13 @@ static void IMPPortraitRegionButtonCallback(MOUSE_REGION* pRegion, UINT32 iReaso
 			PlayVoice();
 		}
 	}
+}
+
+
+void IMP_Voices_PlayCurrentSample(void)
+{
+	if (SoundIsPlaying(uiVocVoiceSound)) SoundStop(uiVocVoiceSound);
+	PlayVoice();
 }
 
 

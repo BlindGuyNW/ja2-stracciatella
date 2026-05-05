@@ -853,3 +853,40 @@ static void NextQuestionButtonCallback(GUI_BUTTON *btn, UINT32 iReason)
 		MoveAheadAQuestion( );
 	}
 }
+
+
+// Console_Imp wrappers. These run the same logic as the on-screen Confirm /
+// Prev / Next buttons by calling straight into the file-local handlers, so
+// the quiz's bookkeeping (giMaxPersonalityQuizQuestion bump, the Q16 finish
+// branch into IMP_PERSONALITY_FINISH + CompileQuestionsInStatsAndWhatNot)
+// stays in one place.
+void IMP_Quiz_ConfirmAnswer(void)
+{
+	BtnIMPPersonalityQuizAnswerConfirmCallback(nullptr, MSYS_CALLBACK_REASON_POINTER_UP);
+	fReDrawCharProfile = TRUE;
+}
+
+void IMP_Quiz_NextQuestion(void)
+{
+	MoveAheadAQuestion();
+	fReDrawCharProfile = TRUE;
+}
+
+void IMP_Quiz_PrevQuestion(void)
+{
+	MoveBackAQuestion();
+	fReDrawCharProfile = TRUE;
+}
+
+INT32 IMP_Quiz_AnswerCount(INT32 iQuestion)
+{
+	switch (iQuestion)
+	{
+		case  0: return 6;
+		case  3: return 5;
+		case  5: return 5;
+		case 10: return 5;
+		case 11: return 8;
+		default: return 4;
+	}
+}

@@ -96,7 +96,7 @@ static void RenderPortrait(INT16 const x, INT16 const y)
 }
 
 
-static void IncrementPictureIndex(void)
+void IncrementPictureIndex(void)
 {
 	// cycle to next picture
 	iCurrentPortrait++;
@@ -109,7 +109,7 @@ static void IncrementPictureIndex(void)
 }
 
 
-static void DecrementPicture(void)
+void DecrementPicture(void)
 {
 	// cycle to previous picture
 	iCurrentPortrait--;

@@ -29,6 +29,7 @@ static const INT32 iIMPQuestionLengths[25] =
 #define QTN_FIRST_COLUMN_X   80
 #define QTN_SECOND_COLUMN_X 320
 
+// Defined extern in IMP_Text_System.h.
 std::optional<EDTFile> gImpText;
 
 void OpenIMPTexts() {
@@ -286,4 +287,32 @@ static void OffSetQuestionForFemaleSpecificQuestions(INT32* iCurrentOffset)
 	}
 
 	*iCurrentOffset = IMP_CON_3 - IMP_QUESTION_1 + 3 + iExtraOffSet;
+}
+
+
+// Resolves question N (0..15) to the IMP_QUESTION_1 + offset record id,
+// taking into account the female-specific overrides for questions 0/3/8/9/13.
+// Mirrors PrintIMPPersonalityQuizQuestionAndAnswers above. The console uses
+// this to read question and answer text via gImpText->at(...) without going
+// through the renderer.
+INT32 IMP_Quiz_QuestionRecord(INT32 iQuestion)
+{
+	INT32 iOffset = 0;
+	for (INT32 i = 0; i < iQuestion; ++i)
+	{
+		iOffset += iIMPQuestionLengths[i];
+	}
+
+	if (!fCharacterIsMale)
+	{
+		// Save and restore so the renderer's reliance on
+		// giCurrentPersonalityQuizQuestion isn't perturbed when the
+		// console resolves a different question's text.
+		const INT32 saved = giCurrentPersonalityQuizQuestion;
+		giCurrentPersonalityQuizQuestion = iQuestion;
+		OffSetQuestionForFemaleSpecificQuestions(&iOffset);
+		giCurrentPersonalityQuizQuestion = saved;
+	}
+
+	return IMP_QUESTION_1 + iOffset;
 }
