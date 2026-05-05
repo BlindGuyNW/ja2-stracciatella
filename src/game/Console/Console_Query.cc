@@ -211,17 +211,28 @@ namespace
 		return true;
 	}
 
+	// Absolute (col,row) for a soldier, in the same format `move <col,row>`
+	// accepts. The relative `<dist> <dir>` after it is still useful for
+	// quick spatial framing, but the coord lets the user address the tile
+	// directly without first having to walk-to-name.
+	ST::string coordLabel(INT16 gridno)
+	{
+		return ST::format("({},{})", gridno % WORLD_COLS, gridno / WORLD_COLS);
+	}
+
 	ST::string formatHostileLine(const ListedSoldier& ls, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
 		const SOLDIERTYPE& t = *ls.soldier;
 		const UINT8  dir    = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, t.sGridNo));
 		const UINT16 weapon = t.inv[HANDPOS].usItem;
 		return weapon != 0
-			? ST::format("  e{} {}, {} tiles {}, {}, life {}, {}",
-			             tagN, t.name, ls.distance, directionWord(dir),
+			? ST::format("  e{} {} {}, {} tiles {}, {}, life {}, {}",
+			             tagN, t.name, coordLabel(t.sGridNo),
+			             ls.distance, directionWord(dir),
 			             stanceWord(t), t.bLife, itemName(weapon))
-			: ST::format("  e{} {}, {} tiles {}, {}, life {}",
-			             tagN, t.name, ls.distance, directionWord(dir),
+			: ST::format("  e{} {} {}, {} tiles {}, {}, life {}",
+			             tagN, t.name, coordLabel(t.sGridNo),
+			             ls.distance, directionWord(dir),
 			             stanceWord(t), t.bLife);
 	}
 
@@ -229,8 +240,9 @@ namespace
 	{
 		const SOLDIERTYPE& t = *ls.soldier;
 		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, t.sGridNo));
-		return ST::format("  m{} {}, {} tiles {}, life {}, AP {}",
-		                  tagN, t.name, ls.distance, directionWord(dir),
+		return ST::format("  m{} {} {}, {} tiles {}, life {}, AP {}",
+		                  tagN, t.name, coordLabel(t.sGridNo),
+		                  ls.distance, directionWord(dir),
 		                  t.bLife, t.bActionPoints);
 	}
 
@@ -471,8 +483,9 @@ namespace
 		// quest NPCs have proper names. Either way, lead with the name and
 		// leave gameplay vitals (life/AP) off — civs aren't typically a
 		// resource the player manages.
-		return ST::format("  c{} {}, {} tiles {}, {}",
-		                  tagN, t.name, ls.distance, directionWord(dir),
+		return ST::format("  c{} {} {}, {} tiles {}, {}",
+		                  tagN, t.name, coordLabel(t.sGridNo),
+		                  ls.distance, directionWord(dir),
 		                  stanceWord(t));
 	}
 

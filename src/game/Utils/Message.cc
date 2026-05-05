@@ -353,6 +353,17 @@ void MapScreenMessage(UINT16 usColor, UINT8 ubPriority, const ST::string& str)
 	ST::string const& DestString{ str };
 #endif
 
+	// MSG_DIALOG carries NPC subtitle text from HandleTacticalNPCTextUI
+	// (Dialogue_Control.cc:929). It's the only subtitle path that *doesn't*
+	// also go through ScreenMsg, so without this hook the SR user hears
+	// nothing during a talkbox conversation. Narrate it the same way
+	// ScreenMsg does — non-interrupting, so quotes don't truncate each
+	// other when several queue at once.
+	if (ubPriority == MSG_DIALOG)
+	{
+		AX_Say(str, /*interrupt=*/false);
+	}
+
 	switch (ubPriority)
 	{
 		case MSG_UI_FEEDBACK:

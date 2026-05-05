@@ -55,6 +55,8 @@ namespace
 		{ "swap",       &Cmd_Swap,       "swap <slot> <slot> — move an item between two slots"    },
 		{ "drop",       &Cmd_Drop,       "drop <slot> — drop a slot's item to the ground"         },
 		{ "give",       &Cmd_Give,       "give <slot> <name> — hand a slot's item to a teammate"  },
+		{ "talk",       &Cmd_Talk,       "talk <target> — start conversation; talk <approach|skip|done> drives an open panel" },
+		{ "exit",       &Cmd_Exit,       "exit <n|s|e|w> — leave the sector through that side"   },
 		{ "end-turn",   &Cmd_EndTurn,    "end-turn"                                               },
 		{ "email",     &Cmd_Email,      "email | email unread | email <id> — inbox (laptop only)" },
 		{ "imp",       &Cmd_Imp,        "imp [goto|name|nickname|gender|question|answer|confirm|prev|next|traits|trait|stats|stat|portrait|voice|done|hire]" },

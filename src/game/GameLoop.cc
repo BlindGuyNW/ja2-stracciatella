@@ -20,6 +20,7 @@
 #include "ContentManager.h"
 #include "Text.h"
 #include "HelpScreen.h"
+#include "Interface_Dialogue.h"
 #include "SaveLoadGame.h"
 #include "Options_Screen.h"
 #include "Button_System.h"
@@ -216,21 +217,32 @@ try
 	// positions, untouched-but-stale entries linger in the snapshot
 	// otherwise. Observed in `r` listings showing both old help text
 	// and the new page side-by-side.
+	//
+	// gfInTalkPanel is in the same family: the talkbox is a transient
+	// overlay that pops on the *same* tactical screen, so it doesn't
+	// trip a guiCurrentScreen change. Without this, an NPC who emits a
+	// one-off "No talk" quote-and-close leaves their approach rows
+	// (Friendly / Direct / Threaten / etc.) in the snapshot, and
+	// subsequent `r` listings keep showing them after the panel is long
+	// gone.
 	{
 		static ScreenID  s_lastScreen     = ERROR_SCREEN;
 		static LaptopMode s_lastLaptopMode = LAPTOP_MODE_NONE;
 		static HelpScreenID s_lastHelp    = HELP_SCREEN_NONE;
 		static INT32     s_lastImpPage    = -1;
+		static BOOLEAN   s_lastInTalkPanel = FALSE;
 		if (guiCurrentScreen != s_lastScreen
 		 || guiCurrentLaptopMode != s_lastLaptopMode
 		 || gHelpScreen.bCurrentHelpScreen != s_lastHelp
-		 || iCurrentImpPage != s_lastImpPage)
+		 || iCurrentImpPage != s_lastImpPage
+		 || gfInTalkPanel != s_lastInTalkPanel)
 		{
 			TextCapture_Reset();
-			s_lastScreen     = guiCurrentScreen;
-			s_lastLaptopMode = guiCurrentLaptopMode;
-			s_lastHelp       = gHelpScreen.bCurrentHelpScreen;
-			s_lastImpPage    = iCurrentImpPage;
+			s_lastScreen      = guiCurrentScreen;
+			s_lastLaptopMode  = guiCurrentLaptopMode;
+			s_lastHelp        = gHelpScreen.bCurrentHelpScreen;
+			s_lastImpPage     = iCurrentImpPage;
+			s_lastInTalkPanel = gfInTalkPanel;
 		}
 	}
 	TextCapture_BeginFrame();

@@ -21,6 +21,8 @@ void Cmd_SwapHands(const std::vector<std::string>& args);
 void Cmd_Swap     (const std::vector<std::string>& args);
 void Cmd_Drop     (const std::vector<std::string>& args);
 void Cmd_Give     (const std::vector<std::string>& args);
+void Cmd_Talk     (const std::vector<std::string>& args);
+void Cmd_Exit     (const std::vector<std::string>& args);
 void Cmd_EndTurn  (const std::vector<std::string>& args);
 
 #endif // GAME_CONSOLE_ACTION_H_

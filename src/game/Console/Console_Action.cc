@@ -3,10 +3,14 @@
 
 #include "Console.h"
 
+#include "AI.h"
 #include "Animation_Control.h"
+#include "Arms_Dealer_Init.h"
 #include "CalibreModel.h"
+#include "Civ_Quotes.h"
 #include "ContentManager.h"
 #include "Dialogue_Control.h"
+#include "Faces.h"
 #include "GameInstance.h"
 #include "GameScreen.h"
 #include "Handle_Doors.h"
@@ -14,18 +18,31 @@
 #include "Handle_UI.h"
 #include "Interactive_Tiles.h"
 #include "Interface.h"
+#include "Interface_Control.h"
+#include "Interface_Dialogue.h"
 #include "Interface_Panels.h"
 #include "Isometric_Utils.h"
 #include "ItemModel.h"
 #include "Item_Types.h"
 #include "Items.h"
+#include "LOS.h"
+#include "Map_Information.h"
 #include "MercProfile.h"
+#include "NPC.h"
+#include "OppList.h"
 #include "Overhead.h"
 #include "Overhead_Types.h"
+#include "PathAI.h"
 #include "Points.h"
+#include "QArray.h"
+#include "ShopKeeper_Interface.h"
 #include "Soldier.h"
+#include "Soldier_Add.h"
 #include "Soldier_Control.h"
 #include "Soldier_Macros.h"
+#include "Soldier_Profile.h"
+#include "StrategicMap.h"
+#include "Strategic_Movement.h"
 #include "Squads.h"
 #include "Structure.h"
 #include "Structure_Internals.h"
@@ -1093,4 +1110,492 @@ void Cmd_Give(const std::vector<std::string>& args)
 			"Approaching {} ({} tile{}) to hand over {}.",
 			recipient->name, dist, dist == 1 ? "" : "s", itemName));
 	}
+}
+
+// Interface_Dialogue.cc owns these and re-uses Quests.cc's local extern.
+// Re-declare here for the same reason: there's no header-exposed accessor
+// and we need both to mirror TalkPanelClickCallback's give branch.
+extern SOLDIERTYPE* gpSrcSoldier;
+extern SOLDIERTYPE* gpDestSoldier;
+
+namespace
+{
+	// Subcommand keywords for an active talk panel. Compared
+	// case-insensitively against the first arg. If a match hits, the
+	// caller is asking us to drive the talkbox (pick an approach, skip
+	// the current quote, list options, etc.) — not to start a new
+	// conversation. Anything else (a name, mN, eN, col,row) initiates.
+	bool eqCI(const std::string& a, const char* b)
+	{
+		std::size_t i = 0;
+		for (; i < a.size() && b[i]; ++i)
+		{
+			if (std::tolower(static_cast<unsigned char>(a[i])) !=
+			    std::tolower(static_cast<unsigned char>(b[i]))) return false;
+		}
+		return i == a.size() && b[i] == '\0';
+	}
+
+	bool isTalkSubcommand(const std::string& tok)
+	{
+		const char* const kKeywords[] = {
+			"options", "list",
+			"friendly", "direct", "threaten", "recruit", "repeat",
+			"give", "buysell",
+			"done", "cancel", "leave",
+			"skip", "shutup",
+		};
+		for (const char* k : kKeywords) if (eqCI(tok, k)) return true;
+		return false;
+	}
+
+	const char* approachLabel(Approach a)
+	{
+		switch (a)
+		{
+			case APPROACH_FRIENDLY: return "Friendly";
+			case APPROACH_DIRECT:   return "Direct";
+			case APPROACH_THREATEN: return "Threaten";
+			case APPROACH_RECRUIT:  return "Recruit";
+			case APPROACH_REPEAT:   return "Repeat (\"Come Again?\")";
+			case APPROACH_BUYSELL:  return "Give / Buy-sell";
+			default:                return "?";
+		}
+	}
+
+	// Mirror TalkPanelClickCallback's "give" branch (Interface_Dialogue.cc:803).
+	// Dealer with unused buy-sell records → fire that approach as a quote.
+	// Dealer without records → close the panel and enter the shop screen
+	// (still inaccessible, but matches the click UI; the user knows they're
+	// hitting that limitation by typing 'talk give' anyway). Non-dealer →
+	// close the panel, set the NPC to wait, and tell the user to use the
+	// standalone `give <slot> <name>` verb to complete the handoff.
+	void handleTalkGive()
+	{
+		const UINT8 ch = gTalkPanel.ubCharNum;
+		if (IsMercADealer(ch))
+		{
+			if (NPCHasUnusedRecordWithGivenApproach(ch, APPROACH_BUYSELL))
+			{
+				TriggerNPCWithGivenApproach(ch, APPROACH_BUYSELL);
+				Console_Println(ST::format(
+					"Asking {} about buying / selling.", GetProfile(ch).zNickname));
+			}
+			else
+			{
+				DeleteTalkingMenu();
+				EnterShopKeeperInterfaceScreen(ch);
+				Console_Println(ST::format(
+					"Closed talkbox, opened shop with {}. (Shop UI is currently inaccessible.)",
+					GetProfile(ch).zNickname));
+			}
+			return;
+		}
+
+		// Non-dealer give: same state shuffle the click UI does, minus the
+		// inventory-cursor trick (we don't drive a cursor — the user will
+		// type 'give <slot> <name>' explicitly).
+		gTalkPanel.fHandled              = TRUE;
+		gTalkPanel.fHandledTalkingVal    = gTalkPanel.face->fTalking;
+		gTalkPanel.fHandledCanDeleteVal  = TRUE;
+
+		if (gpDestSoldier)
+		{
+			gpDestSoldier->bNextAction       = AI_ACTION_WAIT;
+			gpDestSoldier->usNextActionData  = 10000;
+			if (gpDestSoldier->bAction != AI_ACTION_PENDING_ACTION)
+			{
+				CancelAIAction(gpDestSoldier);
+			}
+		}
+
+		Console_Println(ST::format(
+			"Closed talkbox; {} is waiting. Use 'give <slot> {}' to hand them an item.",
+			GetProfile(gTalkPanel.ubCharNum).zNickname,
+			GetProfile(gTalkPanel.ubCharNum).zNickname));
+	}
+
+	void runTalkSubcommand(const std::string& sub)
+	{
+		if (!gfInTalkPanel)
+		{
+			Console_Println(ST::format(
+				"No talk panel active. Start one with 'talk <name>' first."));
+			return;
+		}
+
+		if (eqCI(sub, "options") || eqCI(sub, "list"))
+		{
+			Console_Println(ST::format("Talking to {}. Approaches:",
+			                           GetProfile(gTalkPanel.ubCharNum).zNickname));
+			Console_Println("  talk friendly | direct | threaten | recruit | repeat | give");
+			Console_Println("  talk skip      — interrupt the current quote");
+			Console_Println("  talk done      — close the panel");
+			if (gTalkPanel.face && gTalkPanel.face->fTalking)
+			{
+				Console_Println("  (Currently speaking. Use 'talk skip' or wait, then pick an approach.)");
+			}
+			return;
+		}
+
+		if (eqCI(sub, "skip") || eqCI(sub, "shutup"))
+		{
+			if (gTalkPanel.face && gTalkPanel.face->fTalking)
+			{
+				InternalShutupaYoFace(gTalkPanel.face, FALSE);
+				Console_Println("Skipped current quote.");
+			}
+			else
+			{
+				Console_Println("Nothing to skip.");
+			}
+			return;
+		}
+
+		if (eqCI(sub, "done") || eqCI(sub, "cancel") || eqCI(sub, "leave"))
+		{
+			// Mirror DoneTalkingButtonClickCallback (Interface_Dialogue.cc:500).
+			gTalkPanel.fHandled              = TRUE;
+			gTalkPanel.fHandledTalkingVal    = gTalkPanel.face->fTalking;
+			gTalkPanel.fHandledCanDeleteVal  = TRUE;
+			Console_Println("Closed talkbox.");
+			return;
+		}
+
+		// Approach selection. Refuse mid-quote, matching the click UI's
+		// `if (!gTalkPanel.face->fTalking)` guard. The user explicitly
+		// types 'talk skip' to interrupt — making that an explicit step
+		// keeps SR pacing predictable and avoids stomping mid-line.
+		if (gTalkPanel.face && gTalkPanel.face->fTalking)
+		{
+			Console_Println(ST::format(
+				"{} is still speaking. Use 'talk skip' to interrupt, or wait.",
+				GetProfile(gTalkPanel.ubCharNum).zNickname));
+			return;
+		}
+
+		Approach appr = APPROACH_NONE;
+		if      (eqCI(sub, "friendly")) appr = APPROACH_FRIENDLY;
+		else if (eqCI(sub, "direct"))   appr = APPROACH_DIRECT;
+		else if (eqCI(sub, "threaten")) appr = APPROACH_THREATEN;
+		else if (eqCI(sub, "recruit"))  appr = APPROACH_RECRUIT;
+		else if (eqCI(sub, "repeat"))   appr = APPROACH_REPEAT;
+		else if (eqCI(sub, "give") || eqCI(sub, "buysell"))
+		{
+			handleTalkGive();
+			return;
+		}
+
+		if (appr == APPROACH_NONE)
+		{
+			Console_Println(ST::format("unknown talk subcommand '{}'.", sub));
+			return;
+		}
+
+		// Converse routes through the engine's quote system, which will
+		// emit the NPC's response via TacticalCharacterDialogue → ScreenMsg
+		// (we hooked MSG_DIALOG into AX_Say so subtitles narrate). If
+		// the NPC has no record matching this approach, the engine
+		// silently drops it; surface a hint so the user isn't left
+		// guessing.
+		Converse(gTalkPanel.ubCharNum, gubSrcSoldierProfile, appr);
+		Console_Println(ST::format("Approach: {}.", approachLabel(appr)));
+	}
+}
+
+void Cmd_Talk(const std::vector<std::string>& args)
+{
+	if (args.size() < 2)
+	{
+		if (gfInTalkPanel)
+		{
+			runTalkSubcommand("options");
+			return;
+		}
+		Console_Println("usage: talk <target>  (a name, mN, eN, or col,row)");
+		Console_Println("       talk <approach>  (when a talk panel is open)");
+		Console_Println("       talk options     to list approach keywords");
+		return;
+	}
+
+	// Subcommand keywords short-circuit *unconditionally* — even when no
+	// talk panel is up. Otherwise typing 'talk options' on a refusenik
+	// NPC (one whose only response is a quote, like Pacos) falls through
+	// to parseTarget, which reports "no known soldier matches 'options'"
+	// — confusing because the user isn't trying to address a soldier.
+	// Better to recognize the keyword and explain the panel isn't open.
+	if (isTalkSubcommand(args[1]))
+	{
+		if (args.size() > 2)
+		{
+			Console_Println(ST::format(
+				"unexpected extra arg '{}' after 'talk {}'.", args[2], args[1]));
+			return;
+		}
+		runTalkSubcommand(args[1]);
+		return;
+	}
+
+	if (args.size() > 2)
+	{
+		// Reject `talk pacos friendly` etc. — staging is required so the
+		// user can hear the opening quote (and confirm a panel actually
+		// opened) before picking an approach.
+		Console_Println(ST::format(
+			"unexpected extra arg '{}'. Use 'talk <name>' first, then 'talk <approach>'.",
+			args[2]));
+		return;
+	}
+
+	SOLDIERTYPE* const sel = GetSelectedMan();
+	if (!sel) { Console_Println("No merc selected."); return; }
+	if (AM_A_ROBOT(sel))
+	{
+		Console_Println(ST::format("{} cannot talk to anyone.", sel->name));
+		return;
+	}
+
+	Target tgt;
+	ST::string err;
+	if (parseTarget(args, 1, sel, tgt, err) == 0) { Console_Println(err); return; }
+	if (!tgt.soldier)
+	{
+		Console_Println("'talk' target must be a soldier (a name, mN, or eN), not a tile.");
+		return;
+	}
+	SOLDIERTYPE* const target = tgt.soldier;
+	if (target == sel)
+	{
+		Console_Println("Can't talk to self.");
+		return;
+	}
+
+	// Mirror the click UI eligibility (Handle_UI.cc:4671): fGive=FALSE
+	// (talk, not give), fAllowMercs=TRUE (teammate chatter is allowed),
+	// fCheckCollapsed=FALSE (we check collapsed inline like the engine
+	// does, so we can give a clearer message).
+	if (!IsValidTalkableNPC(target, FALSE, TRUE, FALSE))
+	{
+		Console_Println(ST::format(
+			"Can't talk to {}: not a valid conversation target.", target->name));
+		return;
+	}
+	if (target->bCollapsed)
+	{
+		Console_Println(ST::format("{} is collapsed.", target->name));
+		return;
+	}
+
+	// Same-team non-EPC: this is the social-chatter shortcut
+	// (Handle_UI.cc:4708). The click UI fires a randomized
+	// QUOTE_NEGATIVE_COMPANY / QUOTE_PASSING_DISLIKE / QUOTE_SOCIAL_TRAIT
+	// based on attitude, no conversation popup. The chatter line lands
+	// in ScreenMsg → AX_Say so the SR user hears it.
+	if (target->bTeam == OUR_TEAM && !AM_AN_EPC(target))
+	{
+		if (target->ubProfile == DIMITRI)
+		{
+			Console_Println(ST::format(
+				"{} doesn't talk much.", target->name));
+			return;
+		}
+		const UINT8 dieMax = (target->ubProfile != NO_PROFILE &&
+			gMercProfiles[target->ubProfile].bAttitude != ATT_NORMAL) ? 3 : 2;
+		UINT8 dice = (UINT8)Random(dieMax);
+		if (target->ubWhatKindOfMercAmI == MERC_TYPE__PLAYER_CHARACTER) dice = 0;
+
+		UINT16 quote = QUOTE_NEGATIVE_COMPANY;
+		if (dice == 1)
+		{
+			quote = QuoteExp_PassingDislike[target->ubProfile]
+				? QUOTE_PASSING_DISLIKE : QUOTE_NEGATIVE_COMPANY;
+		}
+		else if (dice == 2)
+		{
+			quote = QUOTE_SOCIAL_TRAIT;
+		}
+		if (target->ubProfile == IRA) quote = QUOTE_PASSING_DISLIKE;
+
+		TacticalCharacterDialogue(target, quote);
+		Console_Println(ST::format("{} chats with {}.", sel->name, target->name));
+		return;
+	}
+
+	// LOS check before initiating — the click UI emits a localized
+	// "no LOS" ScreenMsg here (Handle_UI.cc:4680). We rely on the same
+	// ScreenMsg path to surface that message via AX_Say if the engine
+	// emits it, but pre-check ourselves so we can also fail cleanly
+	// with a console-side message.
+	const INT16 distVisible = DistanceVisible(
+		sel, DIRECTION_IRRELEVANT, DIRECTION_IRRELEVANT,
+		target->sGridNo, target->bLevel);
+	if (!SoldierTo3DLocationLineOfSightTest(
+		sel, target->sGridNo, target->bLevel, 3, distVisible, TRUE))
+	{
+		Console_Println(ST::format(
+			"{} has no line of sight to {}.", sel->name, target->name));
+		return;
+	}
+
+	const UINT32 range = GetRangeFromGridNoDiff(sel->sGridNo, target->sGridNo);
+
+	if (range > NPC_TALK_RADIUS)
+	{
+		// Walk-up case (Handle_UI.cc:4787). Find an adjacent destination,
+		// validate the path, queue MERC_TALK so PlayerSoldierStartTalking
+		// fires on arrival.
+		const INT16 actionGridNo = FindAdjacentGridEx(
+			sel, target->sGridNo, NULL, NULL, FALSE, TRUE);
+		if (actionGridNo == -1)
+		{
+			Console_Println(ST::format(
+				"No path from {} to {}.", sel->name, target->name));
+			return;
+		}
+		if (UIPlotPath(sel, actionGridNo, NO_COPYROUTE, FALSE,
+		               sel->usUIMovementMode, sel->bActionPoints) == 0)
+		{
+			Console_Println(ST::format(
+				"No path from {} to {}.", sel->name, target->name));
+			return;
+		}
+
+		gfNPCCircularDistLimit = TRUE;
+		UINT8 newDir;
+		const INT16 sweetSpot = FindGridNoFromSweetSpotWithStructData(
+			sel, sel->usUIMovementMode, target->sGridNo,
+			NPC_TALK_RADIUS - 1, &newDir, TRUE);
+		gfNPCCircularDistLimit = FALSE;
+
+		if ((gTacticalStatus.uiFlags & INCOMBAT) &&
+		    !EnoughPoints(sel, AP_TALK, 0, TRUE))
+		{
+			Console_Println(ST::format(
+				"{} needs {} AP to start talking but has {}.",
+				sel->name, AP_TALK, sel->bActionPoints));
+			return;
+		}
+
+		Soldier{sel}.setPendingAction(MERC_TALK);
+		sel->uiPendingActionData1 = target->ubID;
+		EVENT_InternalGetNewSoldierPath(sel, sweetSpot, sel->usUIMovementMode,
+		                                TRUE, sel->fNoAPToFinishMove);
+
+		const INT16 dist = PythSpacesAway(sel->sGridNo, sweetSpot);
+		Console_Println(ST::format(
+			"Approaching {} ({} tile{}) to talk.",
+			target->name, dist, dist == 1 ? "" : "s"));
+		return;
+	}
+
+	// Adjacent case (Handle_UI.cc:4828): kick the conversation directly.
+	// PlayerSoldierStartTalking deducts AP_TALK itself (Soldier_Control.cc:8574),
+	// so we only need to gate combat affordability.
+	if ((gTacticalStatus.uiFlags & INCOMBAT) &&
+	    !EnoughPoints(sel, AP_TALK, 0, TRUE))
+	{
+		Console_Println(ST::format(
+			"{} needs {} AP to talk but has {}.",
+			sel->name, AP_TALK, sel->bActionPoints));
+		return;
+	}
+
+	PlayerSoldierStartTalking(sel, target->ubID, FALSE);
+	Console_Println(ST::format("{} talks to {}.", sel->name, target->name));
+}
+
+void Cmd_Exit(const std::vector<std::string>& args)
+{
+	if (!gfWorldLoaded)
+	{
+		Console_Println("Not in a sector.");
+		return;
+	}
+	if (args.size() < 2)
+	{
+		Console_Println("usage: exit <n|s|e|w>");
+		Console_Println("(See 'nearby exits' for valid sides in this sector.)");
+		return;
+	}
+
+	// Restrict to cardinals: strategic move codes are N/S/E/W only.
+	// EXITGRID transitions (basements, building entrances) go through a
+	// different path — `move <col,row>` onto the grid tile already does
+	// the right thing, so we don't expose them here.
+	const INT8 cardinal = parseCompass(args[1]);
+	INT8 strategicDir;
+	switch (cardinal)
+	{
+		case NORTH: strategicDir = NORTH_STRATEGIC_MOVE; break;
+		case EAST:  strategicDir = EAST_STRATEGIC_MOVE;  break;
+		case SOUTH: strategicDir = SOUTH_STRATEGIC_MOVE; break;
+		case WEST:  strategicDir = WEST_STRATEGIC_MOVE;  break;
+		default:
+			Console_Println(ST::format(
+				"exit takes a cardinal direction (n, s, e, w); got '{}'.", args[1]));
+			return;
+	}
+
+	// Mirror the engine's pre-flight: OKForSectorExit returns 0 (no),
+	// 1 (only the selected merc qualifies), or 2 (whole squad qualifies).
+	// It also sets a few reason globals on failure that we read back to
+	// give a useful message instead of a generic refusal.
+	gfInvalidTraversal              = FALSE;
+	gfLoneEPCAttemptingTraversal    = FALSE;
+	gubLoneMercAttemptingToAbandonEPCs = 0;
+
+	UINT32 traverseTime = 0;
+	const UINT8 ok = static_cast<UINT8>(
+		OKForSectorExit(strategicDir, 0, &traverseTime));
+
+	if (!ok)
+	{
+		if (gfInvalidTraversal)
+		{
+			Console_Println(
+				"That direction has no valid traversal route from this sector.");
+		}
+		else if (gfLoneEPCAttemptingTraversal)
+		{
+			Console_Println(
+				"EPCs cannot leave a sector alone — escort them with a merc.");
+		}
+		else if (gubLoneMercAttemptingToAbandonEPCs)
+		{
+			Console_Println(ST::format(
+				"Cannot leave: would abandon {} EPC{} in this sector.",
+				gubLoneMercAttemptingToAbandonEPCs,
+				gubLoneMercAttemptingToAbandonEPCs == 1 ? "" : "s"));
+		}
+		else
+		{
+			Console_Println(
+				"Cannot exit that side. Move closer to the edge first.");
+		}
+		return;
+	}
+
+	// 1 = only the selected merc made it close enough; 2 = whole squad.
+	// Both load the new sector immediately (the *_LOAD_NEW jump codes).
+	// The dialog also offers a *_NO_LOAD pair that just leaves the merc
+	// queued in the strategic group; for SR play, going straight in is
+	// almost always what the user wants. If we ever need the no-load
+	// variant we can add 'exit <dir> noload'.
+	const UINT8 jumpCode = (ok == 1) ? JUMP_SINGLE_LOAD_NEW : JUMP_ALL_LOAD_NEW;
+
+	JumpIntoAdjacentSector(static_cast<UINT8>(cardinal), jumpCode, 0);
+
+	const char* dirWord;
+	switch (cardinal)
+	{
+		case NORTH: dirWord = "north"; break;
+		case EAST:  dirWord = "east";  break;
+		case SOUTH: dirWord = "south"; break;
+		case WEST:  dirWord = "west";  break;
+		default:    dirWord = "?";     break;
+	}
+	Console_Println(ST::format("Exiting {} ({} merc{}).",
+	                           dirWord,
+	                           ok == 1 ? "single" : "whole squad",
+	                           ok == 1 ? "" : ""));
 }
