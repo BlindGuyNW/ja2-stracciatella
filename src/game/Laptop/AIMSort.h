@@ -16,4 +16,12 @@ void EnterAimSort(void);
 void ExitAimSort(void);
 void RenderAimSort(void);
 
+// Sort AimMercArray in place per the current gubCurrentSortMode /
+// gubCurrentListMode. Idempotent. Exposed so console verbs that drive
+// the Members page (AIMMembers_ShowProfile) can pre-sort before
+// computing an index — the engine's own sort runs only on
+// ExitAimSort, so without this the index can be stale when leaving
+// the Sort page.
+void SortAimMercArray(void);
+
 #endif

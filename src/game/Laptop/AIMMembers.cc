@@ -1,4 +1,5 @@
 #include "AIMListingModel.h"
+#include "AIMSort.h"
 #include "Cursors.h"
 #include "Directories.h"
 #include "EMail.h"
@@ -56,6 +57,7 @@
 #include <string_theory/format>
 #include <string_theory/string>
 
+#include <algorithm>
 #include <stdexcept>
 
 
@@ -948,6 +950,133 @@ static void BtnNextButtonCallback(GUI_BUTTON *btn, UINT32 reason)
 		gfRedrawScreen = TRUE;
 		gubVideoConferencingMode = AIM_VIDEO_NOT_DISPLAYED_MODE;
 	}
+}
+
+
+// ----- Console-verb bridges --------------------------------------------
+// These mirror BtnPreviousButtonCallback / BtnNextButtonCallback /
+// BtnContactButtonCallback for use by Console_Aim, sidestepping the
+// MAX_NUMBER_MERCS-step click loop a navigation by stepping would need.
+// Same side effects as the click path so the engine state stays
+// indistinguishable from a sighted player's interaction.
+
+bool AIMMembers_ShowProfile(UINT8 profileID)
+{
+	// While the user is on the Sort page, AimMercArray sits in raw
+	// listing order; SortMercArray runs only on ExitAimSort. If we set
+	// gbCurrentIndex against listing order and then flip into Members,
+	// the engine's exit-sort runs first and our index now points at the
+	// wrong merc. Pre-sort here so the index we compute matches what
+	// the array will look like after the transition.
+	SortAimMercArray();
+
+	auto it = std::find(AimMercArray.begin(), AimMercArray.end(), profileID);
+	if (it == AimMercArray.end()) return false;
+
+	const INT8 newIndex = static_cast<INT8>(it - AimMercArray.begin());
+	if (newIndex == gbCurrentIndex && gbCurrentSoldier == profileID)
+	{
+		return true;
+	}
+
+	DeleteAimPopUpBox();
+	gbCurrentIndex           = newIndex;
+	gbCurrentSoldier         = profileID;
+	gfRedrawScreen           = TRUE;
+	gubVideoConferencingMode = AIM_VIDEO_NOT_DISPLAYED_MODE;
+	return true;
+}
+
+void AIMMembers_StartContact()
+{
+	if (gubVideoConferencingMode == AIM_VIDEO_NOT_DISPLAYED_MODE)
+	{
+		gubVideoConferencingMode    = AIM_VIDEO_POPUP_MODE;
+		gfFirstTimeInContactScreen  = TRUE;
+	}
+	DeleteAimPopUpBox();
+}
+
+UINT8 AIMMembers_CurrentProfile()
+{
+	return gbCurrentSoldier;
+}
+
+namespace
+{
+	// Synthesize a click DWN/UP pair at the button's centroid, the same
+	// way Console_Imp's clickButton does. Mouse coords matter because
+	// the popup buttons' callbacks use the surrounding region for the
+	// select-lights redraw.
+	void clickAimVideoButton(GUIButtonRef const& btnRef)
+	{
+		GUI_BUTTON* b = btnRef;
+		if (!b || !b->ClickCallback) return;
+		const INT16 cx = b->X() + b->W() / 2;
+		const INT16 cy = b->Y() + b->H() / 2;
+		b->Area.MouseXPos    = cx;
+		b->Area.MouseYPos    = cy;
+		b->Area.RelativeXPos = static_cast<INT16>(cx - b->X());
+		b->Area.RelativeYPos = static_cast<INT16>(cy - b->Y());
+		b->ClickCallback(b, MSYS_CALLBACK_REASON_LBUTTON_DWN);
+		b->ClickCallback(b, MSYS_CALLBACK_REASON_LBUTTON_UP);
+	}
+}
+
+AIMMembers_PopupState AIMMembers_GetPopupState()
+{
+	AIMMembers_PopupState st{};
+	st.mode           = gubVideoConferencingMode;
+	st.contractLength = gubContractLength;
+	st.buyEquipment   = gfBuyEquipment != FALSE;
+	st.gearAvailable  = GetProfile(gbCurrentSoldier).usOptionalGearCost > 0;
+	st.contractAmount = giContractAmount;
+	st.mercTalking    = gfMercIsTalking != FALSE;
+	return st;
+}
+
+bool AIMMembers_SetContractLength(UINT8 length)
+{
+	if (length > 2) return false;
+	if (gubVideoConferencingMode != AIM_VIDEO_HIRE_MERC_MODE) return false;
+	clickAimVideoButton(giContractLengthButton[length]);
+	return true;
+}
+
+bool AIMMembers_SetBuyEquipment(bool buy)
+{
+	if (gubVideoConferencingMode != AIM_VIDEO_HIRE_MERC_MODE) return false;
+	if (buy && GetProfile(gbCurrentSoldier).usOptionalGearCost == 0)
+	{
+		return false;
+	}
+	// Button index 0 sets gfBuyEquipment to 0 (no gear);
+	// index 1 sets it to 1 (yes gear). See BtnBuyEquipmentButtonCallback
+	// using btn->GetUserData() as the literal value.
+	clickAimVideoButton(giBuyEquipmentButton[buy ? 1 : 0]);
+	return true;
+}
+
+bool AIMMembers_Authorize()
+{
+	if (gubVideoConferencingMode != AIM_VIDEO_FIRST_CONTACT_MERC_MODE &&
+		gubVideoConferencingMode != AIM_VIDEO_HIRE_MERC_MODE)
+	{
+		return false;
+	}
+	clickAimVideoButton(giAuthorizeButton[0]);
+	return true;
+}
+
+bool AIMMembers_CancelAuthorize()
+{
+	if (gubVideoConferencingMode != AIM_VIDEO_FIRST_CONTACT_MERC_MODE &&
+		gubVideoConferencingMode != AIM_VIDEO_HIRE_MERC_MODE)
+	{
+		return false;
+	}
+	clickAimVideoButton(giAuthorizeButton[1]);
+	return true;
 }
 
 

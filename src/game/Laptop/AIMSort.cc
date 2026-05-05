@@ -382,6 +382,12 @@ static void SortMercArray(void)
 }
 
 
+void SortAimMercArray(void)
+{
+	SortMercArray();
+}
+
+
 static INT32 MercArrayCompare(const UINT8& pNum1, const UINT8& pNum2)
 {
 	MERCPROFILESTRUCT const& p1 = GetProfile(pNum1);

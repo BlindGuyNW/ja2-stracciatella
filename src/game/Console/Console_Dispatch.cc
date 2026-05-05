@@ -1,5 +1,6 @@
 #include "Console_Dispatch.h"
 #include "Console_Action.h"
+#include "Console_Aim.h"
 #include "Console_Email.h"
 #include "Console_Gui.h"
 #include "Console_Imp.h"
@@ -59,6 +60,7 @@ namespace
 		{ "exit",       &Cmd_Exit,       "exit <n|s|e|w> — leave the sector through that side"   },
 		{ "end-turn",   &Cmd_EndTurn,    "end-turn"                                               },
 		{ "email",     &Cmd_Email,      "email | email unread | email <id> — inbox (laptop only)" },
+		{ "aim",       &Cmd_Aim,        "aim | aim members | aim list | aim merc <name|aN> | aim show <name|aN> | aim contact | aim length day|week|biweek | aim gear on|off | aim status | aim authorize | aim cancel" },
 		{ "imp",       &Cmd_Imp,        "imp [goto|name|nickname|gender|question|answer|confirm|prev|next|traits|trait|stats|stat|portrait|voice|done|hire]" },
 		{ "text",      &Cmd_Text,       "text | text <id> | text <id> <value> — read/write text input fields" },
 		{ "web",       &Cmd_Web,        "web | web <name> — list or open a bookmarked laptop site (laptop only)" },
