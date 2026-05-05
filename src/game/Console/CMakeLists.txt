@@ -9,6 +9,7 @@ set(JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Email.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Gui.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Imp.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Map.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Query.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Rows.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Text.cc

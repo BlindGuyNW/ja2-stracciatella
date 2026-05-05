@@ -4,6 +4,7 @@
 #include "Console_Email.h"
 #include "Console_Gui.h"
 #include "Console_Imp.h"
+#include "Console_Map.h"
 #include "Console_Query.h"
 #include "Console_Rows.h"
 #include "Console_Text.h"
@@ -62,6 +63,9 @@ namespace
 		{ "email",     &Cmd_Email,      "email | email unread | email <id> — inbox (laptop only)" },
 		{ "aim",       &Cmd_Aim,        "aim | aim members | aim list | aim merc <name|aN> | aim show <name|aN> | aim contact | aim length day|week|biweek | aim gear on|off | aim status | aim authorize | aim cancel" },
 		{ "imp",       &Cmd_Imp,        "imp [goto|name|nickname|gender|question|answer|confirm|prev|next|traits|trait|stats|stat|portrait|voice|done|hire]" },
+		{ "team",      &Cmd_Team,       "team | team list [filter] [sort] | team merc <name|tN>" },
+		{ "map",       &Cmd_Map,        "map | map sector <id> | map list <towns|mines|sams|militia|enemies> | map town <name> | map mine <town>" },
+		{ "laptop",    &Cmd_Laptop,     "laptop — open the laptop screen"                        },
 		{ "text",      &Cmd_Text,       "text | text <id> | text <id> <value> — read/write text input fields" },
 		{ "web",       &Cmd_Web,        "web | web <name> — list or open a bookmarked laptop site (laptop only)" },
 		{ "g",         &Cmd_Gui,        "g list | g click <id> — enumerate or click visible buttons" },
