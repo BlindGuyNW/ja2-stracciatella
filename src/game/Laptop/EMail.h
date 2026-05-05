@@ -186,6 +186,16 @@ void RenderEmail(void);
 // Subjects live at usOffset; body lines at usOffset+1 .. usOffset+usLength-1.
 ST::string LoadEMailText(UINT32 entry);
 
+// Side effects fired when an email is opened: bookmark a site (IMP, MERC),
+// rewrite insurance amounts in-place, etc. Console_Email's `email <id>` calls
+// this so that opening the IMP intro email actually registers IMP in the
+// bookmark list — same as the GUI viewer does. Caller is responsible for
+// gating: this should only fire on a deliberate "open" action, not when
+// merely listing the inbox. Implementation deliberately skips the
+// IMP_EMAIL_PROFILE_RESULTS branch (it builds GUI-only state) and any
+// other paths whose side effects are tied to the email viewer's lifecycle.
+void Email_FireOpenSideEffects(Email* m);
+
 
 // message manipulation
 void LookForUnread(void);

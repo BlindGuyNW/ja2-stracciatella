@@ -1720,6 +1720,26 @@ static void HandleMailSpecialMessages(UINT16 usMessageId, Email* pMail)
 }
 
 
+void Email_FireOpenSideEffects(Email* const m)
+{
+	if (!m) return;
+	const INT32 offset = m->usOffset;
+
+	// Fires SetBookMark for IMP_EMAIL_INTRO / IMP_EMAIL_AGAIN. Pure logic,
+	// safe to call from the console.
+	HandleAnySpecialEmailMessageEvents(offset);
+
+	// HandleMailSpecialMessages also handles MERC bookmarks and rewrites
+	// insurance amounts in-place (idempotent) — both useful from the
+	// console — but the IMP_EMAIL_PROFILE_RESULTS branch builds
+	// pMessageRecordList for the GUI viewer's wrap layout. The console
+	// loop reads records directly via LoadEMailText and would leak that
+	// list, so we route around it.
+	if (offset == IMP_EMAIL_PROFILE_RESULTS) return;
+	HandleMailSpecialMessages(static_cast<UINT16>(offset), m);
+}
+
+
 
 #define IMP_RESULTS_INTRO_LENGTH 9
 

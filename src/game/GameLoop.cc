@@ -11,6 +11,7 @@
 #include "Sys_Globals.h"
 #include "Laptop.h"
 #include "MapScreen.h"
+#include "CharProfile.h"
 #include "Game_Clock.h"
 #include "Map_Screen_Interface.h"
 #include "Tactical_Save.h"
@@ -206,12 +207,30 @@ try
 	// enumerator can see what was drawn this frame. On screen changes
 	// hard-reset; otherwise BeginFrame preserves the last painted frame
 	// for screens that use dirty-rect rendering and skip repaints.
+	//
+	// We also reset on laptop sub-mode changes (LAPTOP_MODE_AIM →
+	// LAPTOP_MODE_CHAR_PROFILE etc) and when the laptop/mapscreen help
+	// overlay opens or closes. The dirty-rect approach only evicts
+	// entries whose rects get overdrawn by new MPrints, so when an
+	// overlay closes or a sub-page swaps to one with different label
+	// positions, untouched-but-stale entries linger in the snapshot
+	// otherwise. Observed in `r` listings showing both old help text
+	// and the new page side-by-side.
 	{
-		static ScreenID s_lastCaptureScreen = ERROR_SCREEN;
-		if (guiCurrentScreen != s_lastCaptureScreen)
+		static ScreenID  s_lastScreen     = ERROR_SCREEN;
+		static LaptopMode s_lastLaptopMode = LAPTOP_MODE_NONE;
+		static HelpScreenID s_lastHelp    = HELP_SCREEN_NONE;
+		static INT32     s_lastImpPage    = -1;
+		if (guiCurrentScreen != s_lastScreen
+		 || guiCurrentLaptopMode != s_lastLaptopMode
+		 || gHelpScreen.bCurrentHelpScreen != s_lastHelp
+		 || iCurrentImpPage != s_lastImpPage)
 		{
 			TextCapture_Reset();
-			s_lastCaptureScreen = guiCurrentScreen;
+			s_lastScreen     = guiCurrentScreen;
+			s_lastLaptopMode = guiCurrentLaptopMode;
+			s_lastHelp       = gHelpScreen.bCurrentHelpScreen;
+			s_lastImpPage    = iCurrentImpPage;
 		}
 	}
 	TextCapture_BeginFrame();

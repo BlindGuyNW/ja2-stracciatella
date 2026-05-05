@@ -115,12 +115,14 @@ namespace
 			Console_Println(cleanText(LoadEMailText(i)));
 		}
 
-		// Match the GUI: opening an email marks it read. We deliberately
-		// don't fire HandleMailSpecialMessages — those have side effects
-		// (set bookmarks, rewrite insurance amounts in-place) that should
-		// only happen when the player actually opens the message in the
-		// laptop UI.
+		// Match the GUI: opening an email marks it read AND triggers the
+		// engine's side effects (bookmark IMP/MERC, refresh insurance
+		// amounts). Without firing the side effects, reading the IMP
+		// intro from the console would never bookmark IMP, so `web imp`
+		// would refuse forever. The wrapper skips the GUI-only profile-
+		// results branch.
 		m->fRead = TRUE;
+		Email_FireOpenSideEffects(m);
 	}
 }
 
