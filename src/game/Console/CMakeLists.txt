@@ -5,6 +5,7 @@ set(JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Action.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Address.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Dispatch.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Email.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Gui.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Query.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Rows.cc

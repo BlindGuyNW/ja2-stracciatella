@@ -182,6 +182,10 @@ void ExitEmail(void);
 void HandleEmail(void);
 void RenderEmail(void);
 
+// Load one record (subject or body line) from email.edt by absolute index.
+// Subjects live at usOffset; body lines at usOffset+1 .. usOffset+usLength-1.
+ST::string LoadEMailText(UINT32 entry);
+
 
 // message manipulation
 void LookForUnread(void);

@@ -1,5 +1,6 @@
 #include "Console_Dispatch.h"
 #include "Console_Action.h"
+#include "Console_Email.h"
 #include "Console_Gui.h"
 #include "Console_Query.h"
 #include "Console_Rows.h"
@@ -47,6 +48,7 @@ namespace
 		{ "pickup",    &Cmd_Pickup,     "pickup [target] — walk to a tile and grab visible items" },
 		{ "bandage",   &Cmd_Bandage,    "bandage [name] — apply a first aid kit (defaults to self)" },
 		{ "end-turn",  &Cmd_EndTurn,    "end-turn"                                               },
+		{ "email",     &Cmd_Email,      "email | email unread | email <id> — inbox (laptop only)" },
 		{ "g",         &Cmd_Gui,        "g list | g click <id> — enumerate or click visible buttons" },
 		{ "r",         &Cmd_Rows,       "r list | r click <id> — enumerate or click rendered text rows" },
 	};
