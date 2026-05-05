@@ -27,6 +27,7 @@
 #include "GameMode.h"
 #include "FPS.h"
 #include "Logger.h"
+#include "TextCapture.h"
 
 #include <string_theory/format>
 #include <string_theory/string>
@@ -200,6 +201,20 @@ try
 	}
 
 
+
+	// Roll the text-capture buffer forward so the console's row
+	// enumerator can see what was drawn this frame. On screen changes
+	// hard-reset; otherwise BeginFrame preserves the last painted frame
+	// for screens that use dirty-rect rendering and skip repaints.
+	{
+		static ScreenID s_lastCaptureScreen = ERROR_SCREEN;
+		if (guiCurrentScreen != s_lastCaptureScreen)
+		{
+			TextCapture_Reset();
+			s_lastCaptureScreen = guiCurrentScreen;
+		}
+	}
+	TextCapture_BeginFrame();
 
 	uiOldScreen = (*(GameScreens[guiCurrentScreen].HandleScreen))();
 

@@ -1,4 +1,5 @@
 #include "Accessibility.h"
+#include "AxLog.h"
 #include "Button_System.h"
 #include "Console.h"
 #include "Console_Dispatch.h"
@@ -93,6 +94,7 @@ static void shutdownGame()
 
 	Console_Shutdown();
 	AX_Shutdown();
+	Ax_LogShutdown();
 }
 
 /** Deinitialize the game an exit. */
@@ -295,6 +297,7 @@ int main(int argc, char* argv[])
 		{
 			std::vector<ST::string> problems = InitGlobalLocale();
 			Logger_initialize("ja2.log");
+			Ax_LogInit();
 			for (const ST::string& msg : problems)
 			{
 				SLOGW("{}", msg);

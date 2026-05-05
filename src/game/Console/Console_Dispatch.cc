@@ -2,6 +2,7 @@
 #include "Console_Action.h"
 #include "Console_Gui.h"
 #include "Console_Query.h"
+#include "Console_Rows.h"
 
 #include "Console.h"
 
@@ -42,6 +43,7 @@ namespace
 		{ "fire",      &Cmd_Fire,       "fire <count> <target>"                                  },
 		{ "end-turn",  &Cmd_EndTurn,    "end-turn"                                               },
 		{ "g",         &Cmd_Gui,        "g list | g click <id> — enumerate or click visible buttons" },
+		{ "r",         &Cmd_Rows,       "r list | r click <id> — enumerate or click rendered text rows" },
 	};
 
 	void cmdHelp(const ArgList&)

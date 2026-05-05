@@ -112,13 +112,8 @@ namespace
 
 void Cmd_Gui(const std::vector<std::string>& args)
 {
-	if (args.size() < 2)
-	{
-		Console_Println("usage: g list | g click <id>");
-		return;
-	}
-	const std::string& sub = args[1];
-	if      (sub == "list")  cmdList();
-	else if (sub == "click") cmdClick(args);
-	else Console_Println(ST::format("unknown subcommand: g {} (try 'g list')", sub));
+	// Default to 'list' when invoked bare.
+	if (args.size() < 2 || args[1] == "list") { cmdList(); return; }
+	if (args[1] == "click") { cmdClick(args); return; }
+	Console_Println(ST::format("unknown subcommand: g {} (try 'g list')", args[1]));
 }

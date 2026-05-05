@@ -244,6 +244,11 @@ void RenderFastHelp(void);
 // Hook to the SGP's mouse handler
 void MouseSystemHook(UINT16 type, UINT32 button, UINT16 x, UINT16 y);
 
+// Returns the topmost ENABLED region whose rectangle contains (x, y), or
+// NULL if none. The region list is kept priority-sorted, so this matches
+// what the mouse system itself would dispatch a click to at that point.
+MOUSE_REGION* MSYS_FindRegionAt(INT16 x, INT16 y);
+
 class MouseRegion : private MOUSE_REGION
 {
 	public:

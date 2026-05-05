@@ -10,6 +10,7 @@
 #include "GameInstance.h"
 #include "ContentManager.h"
 #include "Logger.h"
+#include "TextCapture.h"
 
 typedef UINT16 GlyphIdx;
 
@@ -275,6 +276,15 @@ void MPrint(INT32 x, INT32 y, const ST::utf32_buffer& codepoints)
 {
 	SGPVSurface::Lock l(FontDestBuffer);
 	MPrintBuffer(l.Buffer<UINT16>(), l.Pitch(), x, y, codepoints);
+	if (!codepoints.empty())
+	{
+		TextCapture_Append(
+			static_cast<INT16>(x),
+			static_cast<INT16>(y),
+			StringPixLength(codepoints, FontDefault),
+			static_cast<INT16>(GetFontHeight(FontDefault)),
+			ST::string(codepoints));
+	}
 }
 
 

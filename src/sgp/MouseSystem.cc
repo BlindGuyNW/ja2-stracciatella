@@ -372,6 +372,21 @@ static void MSYS_DeleteRegionFromList(MOUSE_REGION* const r)
 }
 
 
+MOUSE_REGION* MSYS_FindRegionAt(INT16 x, INT16 y)
+{
+	for (MOUSE_REGION* cur = MSYS_RegList; cur != NULL; cur = cur->next)
+	{
+		if ((cur->uiFlags & MSYS_REGION_ENABLED) &&
+			cur->RegionTopLeftX <= x && x <= cur->RegionBottomRightX &&
+			cur->RegionTopLeftY <= y && y <= cur->RegionBottomRightY)
+		{
+			return cur;
+		}
+	}
+	return NULL;
+}
+
+
 /* Searches the list for the highest priority region and updates its info.  It
  * also dispatches the callback functions */
 static void MSYS_UpdateMouseRegion(void)
