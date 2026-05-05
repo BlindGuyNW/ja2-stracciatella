@@ -5,6 +5,7 @@
 #include "Console.h"
 
 #include "Animation_Control.h"
+#include "ArmourModel.h"
 #include "CalibreModel.h"
 #include "ContentManager.h"
 #include "Exit_Grids.h"
@@ -15,6 +16,7 @@
 #include "Isometric_Utils.h"
 #include "ItemModel.h"
 #include "Item_Types.h"
+#include "Items.h"
 #include "Keys.h"
 #include "LOS.h"
 #include "MagazineModel.h"
@@ -1208,33 +1210,6 @@ void Cmd_Cth(const std::vector<std::string>& args)
 
 namespace
 {
-	const char* slotLabel(int slot)
-	{
-		switch (slot)
-		{
-			case HELMETPOS:     return "Helmet";
-			case VESTPOS:       return "Vest";
-			case LEGPOS:        return "Legs";
-			case HEAD1POS:      return "Head 1";
-			case HEAD2POS:      return "Head 2";
-			case HANDPOS:       return "In hand";
-			case SECONDHANDPOS: return "Off hand";
-			case BIGPOCK1POS:   return "Big pocket 1";
-			case BIGPOCK2POS:   return "Big pocket 2";
-			case BIGPOCK3POS:   return "Big pocket 3";
-			case BIGPOCK4POS:   return "Big pocket 4";
-			case SMALLPOCK1POS: return "Small pocket 1";
-			case SMALLPOCK2POS: return "Small pocket 2";
-			case SMALLPOCK3POS: return "Small pocket 3";
-			case SMALLPOCK4POS: return "Small pocket 4";
-			case SMALLPOCK5POS: return "Small pocket 5";
-			case SMALLPOCK6POS: return "Small pocket 6";
-			case SMALLPOCK7POS: return "Small pocket 7";
-			case SMALLPOCK8POS: return "Small pocket 8";
-		}
-		return "?";
-	}
-
 	int sumMagShots(const OBJECTTYPE& o)
 	{
 		const int n = std::max<int>(1, o.ubNumberOfObjects);
@@ -1323,16 +1298,6 @@ void Cmd_Inventory(const std::vector<std::string>& args)
 		if (!s) { Console_Println(err); return; }
 	}
 
-	// Order: hands first (most actionable), then worn slots, then pockets.
-	static const int kSlotOrder[] =
-	{
-		HANDPOS, SECONDHANDPOS,
-		HELMETPOS, VESTPOS, LEGPOS, HEAD1POS, HEAD2POS,
-		BIGPOCK1POS, BIGPOCK2POS, BIGPOCK3POS, BIGPOCK4POS,
-		SMALLPOCK1POS, SMALLPOCK2POS, SMALLPOCK3POS, SMALLPOCK4POS,
-		SMALLPOCK5POS, SMALLPOCK6POS, SMALLPOCK7POS, SMALLPOCK8POS,
-	};
-
 	Console_Println(ST::format("{} inventory:", s->name));
 
 	int emptyCount = 0;
@@ -1340,7 +1305,12 @@ void Cmd_Inventory(const std::vector<std::string>& args)
 	{
 		const OBJECTTYPE& o = s->inv[slot];
 		if (o.usItem == 0) { ++emptyCount; continue; }
-		Console_Println(ST::format("  {}: {}", slotLabel(slot), formatSlot(o)));
+		// Slot-tag prefix lets the user read "s8 Big pocket 1: AK-47..."
+		// and immediately address it as `examine s8` or `swap s8 s1`.
+		Console_Println(ST::format("  {} {}: {}",
+		                           slotTag(static_cast<INT8>(slot)),
+		                           slotLabel(static_cast<INT8>(slot)),
+		                           formatSlot(o)));
 	}
 	if (emptyCount > 0)
 	{
@@ -1377,7 +1347,7 @@ void Cmd_Inventory(const std::vector<std::string>& args)
 		magCount   += n;
 		totalShots += slotShots;
 		if (!sources.empty()) sources += ", ";
-		sources += ST::format("{} ({})", slotLabel(slot), slotShots);
+		sources += ST::format("{} ({})", slotTag(static_cast<INT8>(slot)), slotShots);
 	}
 
 	if (magCount == 0)
@@ -1391,6 +1361,220 @@ void Cmd_Inventory(const std::vector<std::string>& args)
 		                           magCount, magCount == 1 ? "" : "s",
 		                           totalShots, sources));
 	}
+}
+
+namespace
+{
+	// Verb hint line: tell the player what they can actually do with
+	// this slot from the console. Each verb listed here is one we've
+	// already wired to an engine entry point, so the hint stays honest.
+	ST::string examineVerbs(const SOLDIERTYPE& s, INT8 slot, const OBJECTTYPE& o)
+	{
+		const ItemModel* const it = GCM->getItem(o.usItem);
+		std::vector<const char*> verbs;
+		verbs.push_back("examine");
+
+		if (slot == HANDPOS || slot == SECONDHANDPOS)
+		{
+			verbs.push_back("swap-hands");
+		}
+		if (it->isGun() && slot == HANDPOS)
+		{
+			verbs.push_back("fire <target>");
+			if (o.usItem != ROCKET_LAUNCHER) verbs.push_back("reload");
+		}
+		// Equipping into the main hand uses the engine's hand-swap path —
+		// only worth advertising if the slot isn't already a hand.
+		if (slot != HANDPOS && slot != SECONDHANDPOS &&
+		    (it->isGun() || it->isBlade() || it->isThrowingKnife() ||
+		     it->isLauncher() || it->isPunch()))
+		{
+			verbs.push_back("swap <slot> s1");
+		}
+		if (it->isMedkit())
+		{
+			verbs.push_back("bandage [<target>]");
+		}
+		verbs.push_back("swap <slot> <slot>");
+		verbs.push_back("give <name>");
+		verbs.push_back("drop");
+
+		ST::string line;
+		for (std::size_t i = 0; i < verbs.size(); ++i)
+		{
+			if (i > 0) line += ", ";
+			line += verbs[i];
+		}
+		(void)s; // unused for now — kept for future per-merc gating
+		return line;
+	}
+
+	void describeWeapon(const OBJECTTYPE& o)
+	{
+		const WeaponModel* const w = GCM->getWeapon(o.usItem);
+		if (!w) return;
+
+		const ST::string cal = w->calibre ? w->calibre->getName() : ST::string("n/a");
+		const UINT16 rangeTiles = w->usRange / 10;
+
+		Console_Println(ST::format(
+			"  Gun, calibre {}, range {} tiles, mag {}, {} loaded.",
+			cal, rangeTiles, w->ubMagSize, o.ubGunShotsLeft));
+		Console_Println(ST::format(
+			"  Damage: impact {}, deadliness {}.{}",
+			w->ubImpact, w->ubDeadliness,
+			w->ubShotsPerBurst > 0
+				? ST::format(" Burst {} rounds.", w->ubShotsPerBurst)
+				: ST::string()));
+	}
+
+	void describeAmmo(const OBJECTTYPE& o)
+	{
+		const MagazineModel* const m = GCM->getItem(o.usItem)->asAmmo();
+		if (!m) return;
+		const ST::string cal = m->calibre ? m->calibre->getName() : ST::string("n/a");
+		const int n = std::max<int>(1, o.ubNumberOfObjects);
+		const int total = sumMagShots(o);
+		Console_Println(ST::format(
+			"  Ammo, calibre {}, capacity {} per mag.", cal, m->capacity));
+		if (n == 1)
+		{
+			Console_Println(ST::format("  {} of {} rounds remaining.",
+			                           o.ubShotsLeft[0], m->capacity));
+		}
+		else
+		{
+			Console_Println(ST::format("  {} mags, {} rounds total.", n, total));
+		}
+	}
+
+	void describeArmour(const OBJECTTYPE& o)
+	{
+		const ArmourModel* const a = GCM->getItem(o.usItem)->asArmour();
+		if (!a) return;
+		const char* cls = "armour";
+		switch (a->getArmourClass())
+		{
+			case ARMOURCLASS_VEST:     cls = "vest";     break;
+			case ARMOURCLASS_HELMET:   cls = "helmet";   break;
+			case ARMOURCLASS_LEGGINGS: cls = "leggings"; break;
+			case ARMOURCLASS_PLATE:    cls = "plates";   break;
+		}
+		Console_Println(ST::format(
+			"  Armour ({}): protection {}, explosive protection {}.",
+			cls, a->getProtection(), a->getExplosivesProtection()));
+	}
+
+	void describeMedkit(const OBJECTTYPE& o)
+	{
+		// TotalPoints sums bStatus across the stack — for medkits each
+		// "status" point is one HP-worth of healing remaining, so this
+		// is the practical "how much healing is left" number.
+		Console_Println(ST::format(
+			"  Medkit, {} healing points remaining.", TotalPoints(&o)));
+	}
+
+	void describeAttachments(const OBJECTTYPE& o)
+	{
+		if (!ItemHasAttachments(o)) return;
+		ST::string list;
+		for (UINT16 i : o.usAttachItem)
+		{
+			if (i == NOTHING) continue;
+			if (!list.empty()) list += ", ";
+			list += GCM->getItem(i)->getName();
+		}
+		if (!list.empty()) Console_Println(ST::format("  Attachments: {}.", list));
+	}
+}
+
+void Cmd_Examine(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const s = GetSelectedMan();
+	if (!s) { Console_Println("No merc selected."); return; }
+	if (args.size() < 2)
+	{
+		Console_Println("usage: examine <slot>  (slot is s1..s19; see 'inventory')");
+		return;
+	}
+
+	const INT8 slot = parseSlotTag(args[1]);
+	if (slot < 0)
+	{
+		Console_Println(ST::format(
+			"unknown slot '{}' (use s1..s19; see 'inventory')", args[1]));
+		return;
+	}
+
+	const OBJECTTYPE& o = s->inv[slot];
+	if (o.usItem == NOTHING)
+	{
+		Console_Println(ST::format("{} {}: empty.",
+		                           slotTag(slot), slotLabel(slot)));
+		return;
+	}
+
+	const ItemModel* const it = GCM->getItem(o.usItem);
+
+	Console_Println(ST::format("Examining {} ({}): {}.",
+	                           slotTag(slot), slotLabel(slot), it->getName()));
+
+	// Description is the engine's localized flavor text — same string the
+	// inventory description box shows on the SDL side. Empty for some
+	// stub items; only print when there's actually content.
+	const ST::string& desc = it->getDescription();
+	if (!desc.empty()) Console_Println(ST::format("  {}", desc));
+
+	// Status line: condition (bStatus[0]) for non-stacked single items,
+	// or "Nx, total" for stacks. Money is its own thing.
+	if (it->isMoney())
+	{
+		Console_Println(ST::format("  ${}.", o.uiMoneyAmount));
+	}
+	else
+	{
+		const int n = std::max<int>(1, o.ubNumberOfObjects);
+		// Weight in grams; 1 ubWeight unit = 100 g (hectogram).
+		const int gramsTotal = it->getWeight() * 100 * n;
+		ST::string weight;
+		if (gramsTotal >= 1000)
+		{
+			weight = ST::format("{}.{} kg",
+			                    gramsTotal / 1000, (gramsTotal % 1000) / 100);
+		}
+		else
+		{
+			weight = ST::format("{} g", gramsTotal);
+		}
+		if (n > 1)
+		{
+			Console_Println(ST::format("  Stack of {}, weight {}.", n, weight));
+		}
+		else if (it->isGun() || it->isArmour() || it->isMedkit() || it->isKit() ||
+		         it->isBlade() || it->isPunch() || it->isFace())
+		{
+			Console_Println(ST::format("  Condition {}%, weight {}.",
+			                           o.bStatus[0], weight));
+		}
+		else
+		{
+			Console_Println(ST::format("  Weight {}.", weight));
+		}
+	}
+
+	if      (it->isGun())    describeWeapon(o);
+	else if (it->isAmmo())   describeAmmo(o);
+	else if (it->isArmour()) describeArmour(o);
+	else if (it->isMedkit()) describeMedkit(o);
+
+	describeAttachments(o);
+
+	if (o.fFlags & OBJECT_KNOWN_TO_BE_TRAPPED)
+	{
+		Console_Println("  *** This item is known to be trapped. ***");
+	}
+
+	Console_Println(ST::format("  Verbs: {}.", examineVerbs(*s, slot, o)));
 }
 
 void Cmd_Path(const std::vector<std::string>&)

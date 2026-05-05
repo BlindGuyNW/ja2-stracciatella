@@ -8,15 +8,19 @@
  * points the AI uses (e.g. EVENT_FireGun-equivalents), so weapon sound,
  * animation, and downstream ScreenMsg flow happen for free. */
 
-void Cmd_Select  (const std::vector<std::string>& args);
-void Cmd_Move    (const std::vector<std::string>& args);
-void Cmd_MoveAll (const std::vector<std::string>& args);
-void Cmd_Turn    (const std::vector<std::string>& args);
-void Cmd_Stance  (const std::vector<std::string>& args);
-void Cmd_Fire    (const std::vector<std::string>& args);
-void Cmd_Reload  (const std::vector<std::string>& args);
-void Cmd_Pickup  (const std::vector<std::string>& args);
-void Cmd_Bandage (const std::vector<std::string>& args);
-void Cmd_EndTurn (const std::vector<std::string>& args);
+void Cmd_Select   (const std::vector<std::string>& args);
+void Cmd_Move     (const std::vector<std::string>& args);
+void Cmd_MoveAll  (const std::vector<std::string>& args);
+void Cmd_Turn     (const std::vector<std::string>& args);
+void Cmd_Stance   (const std::vector<std::string>& args);
+void Cmd_Fire     (const std::vector<std::string>& args);
+void Cmd_Reload   (const std::vector<std::string>& args);
+void Cmd_Pickup   (const std::vector<std::string>& args);
+void Cmd_Bandage  (const std::vector<std::string>& args);
+void Cmd_SwapHands(const std::vector<std::string>& args);
+void Cmd_Swap     (const std::vector<std::string>& args);
+void Cmd_Drop     (const std::vector<std::string>& args);
+void Cmd_Give     (const std::vector<std::string>& args);
+void Cmd_EndTurn  (const std::vector<std::string>& args);
 
 #endif // GAME_CONSOLE_ACTION_H_

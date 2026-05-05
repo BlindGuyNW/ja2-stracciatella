@@ -9,6 +9,7 @@
 #include "WorldDef.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <string>
@@ -133,6 +134,78 @@ namespace
 				return a.soldier->ubID < b.soldier->ubID;
 			});
 	}
+}
+
+const INT8 kSlotOrder[kSlotTagCount] =
+{
+	HANDPOS, SECONDHANDPOS,
+	HELMETPOS, VESTPOS, LEGPOS, HEAD1POS, HEAD2POS,
+	BIGPOCK1POS, BIGPOCK2POS, BIGPOCK3POS, BIGPOCK4POS,
+	SMALLPOCK1POS, SMALLPOCK2POS, SMALLPOCK3POS, SMALLPOCK4POS,
+	SMALLPOCK5POS, SMALLPOCK6POS, SMALLPOCK7POS, SMALLPOCK8POS,
+};
+static_assert(NUM_INV_SLOTS == kSlotTagCount,
+	"slot-tag table must enumerate every InvSlotPos exactly once");
+
+INT8 parseSlotTag(const std::string& tok)
+{
+	if (tok.size() < 2) return -1;
+	const char first = static_cast<char>(std::tolower(static_cast<unsigned char>(tok[0])));
+	if (first != 's') return -1;
+	for (std::size_t i = 1; i < tok.size(); ++i)
+	{
+		if (!std::isdigit(static_cast<unsigned char>(tok[i]))) return -1;
+	}
+	const int n = std::atoi(tok.c_str() + 1);
+	if (n < 1 || n > kSlotTagCount) return -1;
+	return kSlotOrder[n - 1];
+}
+
+const char* slotTag(INT8 invPos)
+{
+	// One thread-local buffer per call site is overkill — the tag table
+	// is small, fixed, and only consumed by formatting paths that copy
+	// the result into ST::format. A static lookup table keeps things
+	// simple and avoids any per-call formatting.
+	static const char* const kTags[kSlotTagCount] =
+	{
+		"s1",  "s2",  "s3",  "s4",  "s5",
+		"s6",  "s7",  "s8",  "s9",  "s10",
+		"s11", "s12", "s13", "s14", "s15",
+		"s16", "s17", "s18", "s19",
+	};
+	for (int i = 0; i < kSlotTagCount; ++i)
+	{
+		if (kSlotOrder[i] == invPos) return kTags[i];
+	}
+	return "?";
+}
+
+const char* slotLabel(INT8 invPos)
+{
+	switch (invPos)
+	{
+		case HELMETPOS:     return "Helmet";
+		case VESTPOS:       return "Vest";
+		case LEGPOS:        return "Legs";
+		case HEAD1POS:      return "Head 1";
+		case HEAD2POS:      return "Head 2";
+		case HANDPOS:       return "In hand";
+		case SECONDHANDPOS: return "Off hand";
+		case BIGPOCK1POS:   return "Big pocket 1";
+		case BIGPOCK2POS:   return "Big pocket 2";
+		case BIGPOCK3POS:   return "Big pocket 3";
+		case BIGPOCK4POS:   return "Big pocket 4";
+		case SMALLPOCK1POS: return "Small pocket 1";
+		case SMALLPOCK2POS: return "Small pocket 2";
+		case SMALLPOCK3POS: return "Small pocket 3";
+		case SMALLPOCK4POS: return "Small pocket 4";
+		case SMALLPOCK5POS: return "Small pocket 5";
+		case SMALLPOCK6POS: return "Small pocket 6";
+		case SMALLPOCK7POS: return "Small pocket 7";
+		case SMALLPOCK8POS: return "Small pocket 8";
+	}
+	return "?";
 }
 
 void enumerateHostiles(const SOLDIERTYPE& observer, std::vector<ListedSoldier>& out)

@@ -61,4 +61,25 @@ struct ListedSoldier
 void enumerateHostiles (const SOLDIERTYPE& observer, std::vector<ListedSoldier>& out);
 void enumerateTeammates(const SOLDIERTYPE& observer, std::vector<ListedSoldier>& out);
 
+/* Slot tags ("s1".."s19"). The mapping is fixed, "most actionable
+ * first": s1 = HANDPOS, s2 = SECONDHANDPOS, then worn slots, then
+ * face slots, then big pockets, then small pockets — the same order
+ * Cmd_Inventory prints. Putting the hands at s1/s2 means the most
+ * common reference is the shortest tag. */
+static constexpr int kSlotTagCount = 19;
+
+/** Return the InvSlotPos a "s<N>" tag refers to, or -1 if invalid.
+ *  Accepts "s1".."s19" case-insensitively. */
+INT8 parseSlotTag(const std::string& tok);
+
+/** Inverse of parseSlotTag: 4-character buffer like "s12" for an
+ *  InvSlotPos. Returns "?" for out-of-range. */
+const char* slotTag(INT8 invPos);
+
+/** Display label for an InvSlotPos ("In hand", "Big pocket 1", ...). */
+const char* slotLabel(INT8 invPos);
+
+/** The canonical inventory iteration order matching s1..s19. */
+extern const INT8 kSlotOrder[kSlotTagCount];
+
 #endif // GAME_CONSOLE_ADDRESS_H_

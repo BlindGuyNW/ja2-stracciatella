@@ -6,6 +6,7 @@
 #include "Animation_Control.h"
 #include "CalibreModel.h"
 #include "ContentManager.h"
+#include "Dialogue_Control.h"
 #include "GameInstance.h"
 #include "GameScreen.h"
 #include "Handle_Doors.h"
@@ -13,10 +14,12 @@
 #include "Handle_UI.h"
 #include "Interactive_Tiles.h"
 #include "Interface.h"
+#include "Interface_Panels.h"
 #include "Isometric_Utils.h"
 #include "ItemModel.h"
 #include "Item_Types.h"
 #include "Items.h"
+#include "MercProfile.h"
 #include "Overhead.h"
 #include "Overhead_Types.h"
 #include "Points.h"
@@ -27,6 +30,7 @@
 #include "Structure.h"
 #include "Structure_Internals.h"
 #include "WeaponModels.h"
+#include "World_Items.h"
 #include "WorldDef.h"
 
 #include <cctype>
@@ -731,5 +735,362 @@ void Cmd_Bandage(const std::vector<std::string>& args)
 			Console_Println(ST::format("Bandage issued (code {}).",
 			                           static_cast<int>(r)));
 			break;
+	}
+}
+
+namespace
+{
+	// Combat-only AP cost gate. Real-time the engine doesn't charge for
+	// inventory shuffling, and `Ctrl+Q` (the keyboard swap-hands binding)
+	// is free even in combat. We mirror that: free in real time, free for
+	// hand swap, AP_PICKUP_ITEM (3) for combat drops and combat slot moves.
+	bool deductIfCombat(SOLDIERTYPE* s, INT8 ap)
+	{
+		if (!(gTacticalStatus.uiFlags & INCOMBAT)) return true;
+		if (!EnoughPoints(s, ap, 0, TRUE))         return false;
+		DeductPoints(s, ap, 0);
+		return true;
+	}
+}
+
+void Cmd_SwapHands(const std::vector<std::string>&)
+{
+	SOLDIERTYPE* const s = GetSelectedMan();
+	if (!s) { Console_Println("No merc selected."); return; }
+	if (AM_A_ROBOT(s))
+	{
+		Console_Println(ST::format("{} cannot manipulate items.", s->name));
+		return;
+	}
+
+	const UINT16 oldHand = s->inv[HANDPOS].usItem;
+	const UINT16 oldOff  = s->inv[SECONDHANDPOS].usItem;
+	if (oldHand == NOTHING && oldOff == NOTHING)
+	{
+		Console_Println(ST::format("{}'s hands are both empty.", s->name));
+		return;
+	}
+
+	// Mirror the keyboard binding's path (Turn_Based_Input.cc:3559).
+	// SwapHandItems handles the bare-hand promotion case (off → main)
+	// and the two-handed off-hand displacement case the keyboard path
+	// special-cases inline.
+	SwapHandItems(s);
+	ReLoadSoldierAnimationDueToHandItemChange(s, oldHand, s->inv[HANDPOS].usItem);
+	fInterfacePanelDirty = DIRTYLEVEL2;
+
+	const ItemModel* const newItem = GCM->getItem(s->inv[HANDPOS].usItem);
+	const ItemModel* const oldItem = GCM->getItem(oldHand);
+	if (s->inv[HANDPOS].usItem == NOTHING)
+	{
+		Console_Println(ST::format("{} unreadied {}.", s->name, oldItem->getName()));
+	}
+	else if (oldHand == NOTHING)
+	{
+		Console_Println(ST::format("{} readied {}.", s->name, newItem->getName()));
+	}
+	else
+	{
+		Console_Println(ST::format("{} swapped {} for {}.",
+		                           s->name, oldItem->getName(), newItem->getName()));
+	}
+}
+
+void Cmd_Swap(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const s = GetSelectedMan();
+	if (!s) { Console_Println("No merc selected."); return; }
+	if (AM_A_ROBOT(s))
+	{
+		Console_Println(ST::format("{} cannot manipulate items.", s->name));
+		return;
+	}
+	if (args.size() < 3)
+	{
+		Console_Println("usage: swap <slot> <slot>  (e.g. 'swap s8 s1')");
+		return;
+	}
+
+	const INT8 a = parseSlotTag(args[1]);
+	const INT8 b = parseSlotTag(args[2]);
+	if (a < 0 || b < 0)
+	{
+		Console_Println("slots must be s1..s19; see 'inventory'.");
+		return;
+	}
+	if (a == b)
+	{
+		Console_Println("Source and destination are the same slot.");
+		return;
+	}
+
+	OBJECTTYPE& objA = s->inv[a];
+	OBJECTTYPE& objB = s->inv[b];
+	if (objA.usItem == NOTHING && objB.usItem == NOTHING)
+	{
+		Console_Println("Both slots are empty.");
+		return;
+	}
+
+	// Hand <-> hand goes through SwapHandItems instead of raw SwapObjs:
+	// the helper relocates the main-hand item into a pocket if the
+	// off-hand item is two-handed, where SwapObjs would fail silently.
+	if ((a == HANDPOS && b == SECONDHANDPOS) ||
+	    (a == SECONDHANDPOS && b == HANDPOS))
+	{
+		Cmd_SwapHands({});
+		return;
+	}
+
+	// Validate placement in both directions. CanItemFitInPosition gates
+	// armor-slot affinity (helmet must accept a helmet, etc.), face-slot
+	// affinity, and per-pocket size. fDoingPlacement=FALSE so the
+	// validator doesn't side-effect; we only swap once both directions
+	// are clean.
+	if (objA.usItem != NOTHING && !CanItemFitInPosition(s, &objA, b, FALSE))
+	{
+		Console_Println(ST::format(
+			"{} doesn't fit in {} ({}).",
+			GCM->getItem(objA.usItem)->getName(), slotTag(b), slotLabel(b)));
+		return;
+	}
+	if (objB.usItem != NOTHING && !CanItemFitInPosition(s, &objB, a, FALSE))
+	{
+		Console_Println(ST::format(
+			"{} doesn't fit in {} ({}).",
+			GCM->getItem(objB.usItem)->getName(), slotTag(a), slotLabel(a)));
+		return;
+	}
+
+	if (!deductIfCombat(s, AP_PICKUP_ITEM))
+	{
+		Console_Println(ST::format(
+			"{} needs {} AP to move items but has {}.",
+			s->name, AP_PICKUP_ITEM, s->bActionPoints));
+		return;
+	}
+
+	const UINT16 oldHand = s->inv[HANDPOS].usItem;
+	SwapObjs(&objA, &objB);
+
+	// If a hand changed contents, refresh soldier animation so ready-time
+	// and held-item visuals update — same call the inventory drag path
+	// makes in Interface_Panels.cc:3791.
+	const bool handTouched = (a == HANDPOS || b == HANDPOS);
+	if (handTouched)
+	{
+		ReLoadSoldierAnimationDueToHandItemChange(
+			s, oldHand, s->inv[HANDPOS].usItem);
+	}
+	DirtyMercPanelInterface(s, DIRTYLEVEL2);
+	fInterfacePanelDirty = DIRTYLEVEL2;
+
+	Console_Println(ST::format("Swapped {} ({}) and {} ({}).",
+	                           slotTag(a), slotLabel(a),
+	                           slotTag(b), slotLabel(b)));
+}
+
+void Cmd_Drop(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const s = GetSelectedMan();
+	if (!s) { Console_Println("No merc selected."); return; }
+	if (AM_AN_EPC(s))
+	{
+		Console_Println(ST::format("{} is an escort and refuses to handle items.", s->name));
+		return;
+	}
+	if (args.size() < 2)
+	{
+		Console_Println("usage: drop <slot>  (slot is s1..s19; see 'inventory')");
+		return;
+	}
+
+	const INT8 slot = parseSlotTag(args[1]);
+	if (slot < 0)
+	{
+		Console_Println("slot must be s1..s19; see 'inventory'.");
+		return;
+	}
+	OBJECTTYPE& src = s->inv[slot];
+	if (src.usItem == NOTHING)
+	{
+		Console_Println(ST::format("{} {}: empty.", slotTag(slot), slotLabel(slot)));
+		return;
+	}
+
+	// OBJECT_UNDROPPABLE marks story / quest items the engine refuses to
+	// drop (Item_Types.h:55). Honour it before any AP charge.
+	if (src.fFlags & OBJECT_UNDROPPABLE)
+	{
+		Console_Println(ST::format(
+			"{} cannot be dropped.", GCM->getItem(src.usItem)->getName()));
+		return;
+	}
+
+	if (!deductIfCombat(s, AP_PICKUP_ITEM))
+	{
+		Console_Println(ST::format(
+			"{} needs {} AP to drop items but has {}.",
+			s->name, AP_PICKUP_ITEM, s->bActionPoints));
+		return;
+	}
+
+	// We skip SoldierDropItem's animation path because it relies on the
+	// cursor pTempObject flow (Handle_Items.cc:1097); the crouch/prone
+	// branch in HandleSoldierThrowItem (Handle_Items.cc:1037) already
+	// uses AddItemToPool directly when there's no animation to play, so
+	// taking the same shortcut here is consistent with engine practice.
+	// NotifySoldiersToLookforItems wakes nearby AI to spot the drop.
+	OBJECTTYPE temp = src;
+	const UINT16 wasInHand = (slot == HANDPOS) ? src.usItem : NOTHING;
+	const ST::string droppedName = GCM->getItem(src.usItem)->getName();
+
+	DeleteObj(&src);
+	AddItemToPool(s->sGridNo, &temp, VISIBLE, s->bLevel, 0, -1);
+	NotifySoldiersToLookforItems();
+
+	if (wasInHand != NOTHING)
+	{
+		ReLoadSoldierAnimationDueToHandItemChange(s, wasInHand, NOTHING);
+	}
+	DirtyMercPanelInterface(s, DIRTYLEVEL2);
+	fInterfacePanelDirty = DIRTYLEVEL2;
+
+	Console_Println(ST::format("Dropped {} from {} ({}).",
+	                           droppedName,
+	                           slotTag(slot), slotLabel(slot)));
+}
+
+void Cmd_Give(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const giver = GetSelectedMan();
+	if (!giver) { Console_Println("No merc selected."); return; }
+	if (AM_A_ROBOT(giver))
+	{
+		Console_Println(ST::format("{} cannot hand items to anyone.", giver->name));
+		return;
+	}
+	if (AM_AN_EPC(giver))
+	{
+		Console_Println(ST::format("{} is an escort and refuses to handle items.", giver->name));
+		return;
+	}
+	if (args.size() < 3)
+	{
+		Console_Println("usage: give <slot> <target>  (target is a name, mN/eN, or col,row)");
+		return;
+	}
+
+	const INT8 slot = parseSlotTag(args[1]);
+	if (slot < 0)
+	{
+		Console_Println("first arg must be a slot s1..s19; see 'inventory'.");
+		return;
+	}
+	OBJECTTYPE& src = giver->inv[slot];
+	if (src.usItem == NOTHING)
+	{
+		Console_Println(ST::format("{} {}: empty.", slotTag(slot), slotLabel(slot)));
+		return;
+	}
+	if (src.fFlags & OBJECT_UNDROPPABLE)
+	{
+		Console_Println(ST::format(
+			"{} cannot be handed over.", GCM->getItem(src.usItem)->getName()));
+		return;
+	}
+
+	// Reuse the address parser: it understands names, mN, eN, and col,row.
+	Target tgt;
+	ST::string err;
+	if (parseTarget(args, 2, giver, tgt, err) == 0) { Console_Println(err); return; }
+	if (!tgt.soldier)
+	{
+		Console_Println("'give' target must be a soldier (a name, mN, or eN), not a tile.");
+		return;
+	}
+	SOLDIERTYPE* const recipient = tgt.soldier;
+	if (recipient == giver)
+	{
+		Console_Println("Can't give to self.");
+		return;
+	}
+
+	// Match the click-to-give UI's eligibility check exactly
+	// (Interface_Items.cc:3185). IsValidTalkableNPC(fGive=TRUE,
+	// fAllowMercs=TRUE, fCheckCollapsed=TRUE) accepts: teammates,
+	// non-recruited NPCs/RPCs, EPCs, robots (the engine treats give-
+	// to-robot as the reload-robot path), and visible hostiles only
+	// when intentional. Refuses dead, collapsed, vehicles, hidden
+	// hostiles, and the engine's other internal disqualifiers.
+	//
+	// Caveat the user should know: handing an item to an arms dealer
+	// transitions into the shopkeeper screen (Handle_Items.cc:2367),
+	// which is currently inaccessible. That's a global limitation of
+	// the shop UI surface, not something `give` should gate on — the
+	// player can always cancel out of the dialog if they hit it.
+	if (!IsValidTalkableNPC(recipient, TRUE, TRUE, TRUE))
+	{
+		Console_Println(ST::format(
+			"Can't give to {}: not a valid recipient.", recipient->name));
+		return;
+	}
+	if (recipient->uiStatusFlags & SOLDIER_ENGAGEDINACTION)
+	{
+		Console_Println(ST::format("{} is busy with another action.", recipient->name));
+		return;
+	}
+
+	// SoldierGiveItem doesn't return success/failure; it silently no-ops
+	// if FindAdjacentGridEx fails. Run the same check up front so we can
+	// give the player a clean reason instead of a quiet failure.
+	UINT8 dummyDir;
+	INT16 dummyAdj;
+	const INT16 actionGridNo = FindAdjacentGridEx(
+		giver, recipient->sGridNo, &dummyDir, &dummyAdj, TRUE, FALSE);
+	if (actionGridNo == -1)
+	{
+		Console_Println(ST::format("No adjacent path from {} to {}.",
+		                           giver->name, recipient->name));
+		return;
+	}
+
+	// AP cost is deducted by SoldierGiveItemFromAnimation when the give
+	// completes (Handle_Items.cc:2330), not at queue time, so we don't
+	// pre-deduct here. Combat affordability is still worth checking so
+	// the engine doesn't queue an action the merc can't pay for.
+	if ((gTacticalStatus.uiFlags & INCOMBAT) &&
+	    !EnoughPoints(giver, AP_PICKUP_ITEM, 0, TRUE))
+	{
+		Console_Println(ST::format(
+			"{} needs {} AP to give items but has {}.",
+			giver->name, AP_PICKUP_ITEM, giver->bActionPoints));
+		return;
+	}
+
+	const ST::string itemName = GCM->getItem(src.usItem)->getName();
+	SoldierGiveItem(giver, recipient, &src, slot);
+
+	// Mirror the click UI's "lock conversation" step for off-team
+	// recipients (Interface_Items.cc:3311). Prevents the give from
+	// silently competing with a dialog that the engine is about to
+	// open in response to the handoff.
+	if (recipient->ubProfile != NO_PROFILE &&
+	    !MercProfile(recipient->ubProfile).isPlayerMerc() &&
+	    !RPC_RECRUITED(recipient))
+	{
+		SetEngagedInConvFromPCAction(giver);
+	}
+
+	if (giver->sGridNo == actionGridNo)
+	{
+		Console_Println(ST::format("Giving {} to {}.", itemName, recipient->name));
+	}
+	else
+	{
+		const INT16 dist = PythSpacesAway(giver->sGridNo, actionGridNo);
+		Console_Println(ST::format(
+			"Approaching {} ({} tile{}) to hand over {}.",
+			recipient->name, dist, dist == 1 ? "" : "s", itemName));
 	}
 }
