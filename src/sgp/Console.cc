@@ -3,7 +3,9 @@
 #include "AxLog.h"
 #include "Logger.h"
 
+#include <algorithm>
 #include <atomic>
+#include <deque>
 #include <iostream>
 #include <mutex>
 #include <queue>
@@ -25,6 +27,14 @@ namespace
 
 	std::atomic<bool>       g_running{false};
 	std::thread             g_reader;
+
+	// Strategic-message ring. Cap at 64 — enough for the user to scan
+	// recent activity, small enough that growth never matters. Dropped
+	// entries are the oldest. Mutex shared with stdout to keep the order
+	// of capture / replay coherent if both fire from the game thread.
+	constexpr std::size_t   kMapMsgRingMax = 64;
+	std::mutex              g_msg_mutex;
+	std::deque<ST::string>  g_msg_ring;
 
 	void readerLoop()
 	{
@@ -112,4 +122,28 @@ void Console_Println(const ST::string& line)
 	// open. The dispatcher already echoes input as `> {line}`, so input
 	// lines round-trip through here too — one funnel, one logged copy.
 	AX_LOG("[console] {}", line);
+}
+
+void Console_CaptureMapMessage(const ST::string& str)
+{
+	if (str.empty()) return;
+	std::lock_guard<std::mutex> lock(g_msg_mutex);
+	g_msg_ring.push_back(str);
+	if (g_msg_ring.size() > kMapMsgRingMax) g_msg_ring.pop_front();
+}
+
+void Console_ForEachRecentMapMessage(std::size_t n,
+	const std::function<void(const ST::string&)>& visit)
+{
+	if (!visit) return;
+	std::deque<ST::string> snapshot;
+	{
+		std::lock_guard<std::mutex> lock(g_msg_mutex);
+		snapshot = g_msg_ring;
+	}
+	const std::size_t take = std::min(n, snapshot.size());
+	for (std::size_t i = snapshot.size() - take; i < snapshot.size(); ++i)
+	{
+		visit(snapshot[i]);
+	}
 }

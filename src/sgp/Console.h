@@ -27,4 +27,13 @@ std::size_t Console_Drain(const std::function<void(const std::string&)>& handler
 /** Print one line to stdout (newline appended). Thread-safe. */
 void Console_Println(const ST::string& line);
 
+/* Strategic-message ring buffer for the `log` verb. The engine's own
+ * gMapScreenMessageList is file-static in Message.cc, so we capture each
+ * MapScreenMessage call as it happens and serve from our ring. */
+
+void Console_CaptureMapMessage(const ST::string& str);
+
+void Console_ForEachRecentMapMessage(std::size_t n,
+	const std::function<void(const ST::string&)>& visit);
+
 #endif // SGP_CONSOLE_H_

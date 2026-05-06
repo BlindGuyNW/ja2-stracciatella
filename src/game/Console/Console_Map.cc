@@ -23,8 +23,11 @@
 #include "Soldier_Profile_Type.h"
 #include "ScreenIDs.h"
 #include "Strategic_Mines.h"
+#include "Strategic_Movement.h"
+#include "Strategic_Pathing.h"
 #include "Strategic_Town_Loyalty.h"
 #include "StrategicMap.h"
+#include "Text.h"
 #include "TownModel.h"
 #include "Types.h"
 
@@ -130,11 +133,19 @@ namespace
 			return -1;
 		}
 
-		// tN
-		if (want[0] == 't' && want.size() >= 2)
+		// tN — and bare digits (`1`, `2`...) so users who heard the tag
+		// in a list can echo it back without remembering the `t`.
 		{
+			std::string digits;
+			if (want[0] == 't' && want.size() >= 2)
+				digits = want.substr(1);
+			else
+				digits = want;
 			long n;
-			if (parseInt(want.substr(1), n))
+			bool isDigits = !digits.empty();
+			for (char c : digits)
+				if (!std::isdigit(static_cast<unsigned char>(c))) { isDigits = false; break; }
+			if (isDigits && parseInt(digits, n))
 			{
 				const INT8 slot = lookupTag(n);
 				if (slot < 0)
@@ -662,6 +673,17 @@ namespace
 		return "?";
 	}
 
+	// What the user actually wants to hear: the *effective* state, which
+	// can be paused even when giTimeCompressMode still holds the previous
+	// rate (StopTimeCompression deliberately preserves the rate so resume
+	// goes back to the same speed). IsTimeBeingCompressed encodes the full
+	// "is time advancing right now" check.
+	ST::string compressionState()
+	{
+		if (!IsTimeBeingCompressed()) return ST::string("paused");
+		return ST::string(compressWord(giTimeCompressMode));
+	}
+
 	void cmdMapView()
 	{
 		if (!inCampaignGate()) return;
@@ -670,7 +692,7 @@ namespace
 			"Selected sector: {}. Z-level: {}. Time {02d}:{02d}, day {}. Compression: {}.",
 			sel, static_cast<int>(sSelMap.z),
 			guiHour, guiMin, guiDay,
-			compressWord(giTimeCompressMode)));
+			compressionState()));
 		if (gsHighlightSector.IsValid() && gsHighlightSector != sSelMap)
 		{
 			Console_Println(ST::format("Highlighted (under cursor): {}.",
@@ -1068,6 +1090,551 @@ namespace
 		else Console_Println(ST::format(
 			"unknown list: {} (try towns|mines|sams|militia|enemies)", args[2]));
 	}
+
+	// ============================================================
+	//   Multi-select read-back
+	// ============================================================
+
+	// Pretty-print the current multi-select. Used after `team select`
+	// changes to confirm what the verb actually did, and pulled in by
+	// `map move` to show whose path got plotted.
+	void printSelection()
+	{
+		std::vector<INT8> sel;
+		for (INT8 i = 0; i < MAX_CHARACTER_COUNT; ++i)
+		{
+			if (gCharactersList[i].merc && gCharactersList[i].selected)
+				sel.push_back(i);
+		}
+		if (sel.empty())
+		{
+			Console_Println("Selection: (empty).");
+			return;
+		}
+		ST::string names;
+		for (INT8 slot : sel)
+		{
+			if (!names.empty()) names += ", ";
+			names += gCharactersList[slot].merc->name;
+		}
+		Console_Println(ST::format("Selection: {} ({} merc{}).",
+			names, sel.size(), sel.size() == 1 ? "" : "s"));
+	}
+
+	// ============================================================
+	//   `team select`
+	// ============================================================
+
+	void cmdTeamSelect(const std::vector<std::string>& args)
+	{
+		if (!inCampaignGate()) return;
+		if (args.size() < 3)
+		{
+			Console_Println("usage: team select <name|tN> [+|-] | team select clear");
+			printSelection();
+			return;
+		}
+		const std::string sub = lower(args[2]);
+		if (sub == "clear")
+		{
+			ResetSelectedListForMapScreen();
+			Console_Println("Selection cleared.");
+			return;
+		}
+
+		// Optional trailing +/-/= modifier.
+		enum class Op { Replace, Add, Remove };
+		Op op = Op::Replace;
+		std::size_t targetEnd = args.size();
+		if (args.size() >= 4)
+		{
+			const std::string last = args.back();
+			if      (last == "+") { op = Op::Add;     targetEnd = args.size() - 1; }
+			else if (last == "-") { op = Op::Remove;  targetEnd = args.size() - 1; }
+			else if (last == "=") { op = Op::Replace; targetEnd = args.size() - 1; }
+		}
+
+		std::string targetRaw;
+		for (std::size_t i = 2; i < targetEnd; ++i)
+		{
+			if (i > 2) targetRaw += " ";
+			targetRaw += args[i];
+		}
+
+		ST::string err;
+		const INT8 slot = resolveCharSlot(targetRaw, err);
+		if (slot < 0) { Console_Println(err); return; }
+
+		switch (op)
+		{
+			case Op::Replace:
+				ResetSelectedListForMapScreen();
+				SetEntryInSelectedCharacterList(slot);
+				break;
+			case Op::Add:
+				SetEntryInSelectedCharacterList(slot);
+				break;
+			case Op::Remove:
+				ResetEntryForSelectedList(slot);
+				break;
+		}
+		printSelection();
+	}
+
+	// ============================================================
+	//   `team sleep`
+	// ============================================================
+
+	void cmdTeamSleep(const std::vector<std::string>& args)
+	{
+		if (!inCampaignGate()) return;
+		if (args.size() < 4)
+		{
+			Console_Println("usage: team sleep <name|tN> <on|off>");
+			return;
+		}
+		ST::string err;
+		const INT8 slot = resolveCharSlot(args[2], err);
+		if (slot < 0) { Console_Println(err); return; }
+		SOLDIERTYPE& s = *gCharactersList[slot].merc;
+
+		const std::string what = lower(args.back());
+		bool wantSleep;
+		if      (what == "on" || what == "asleep" || what == "sleep") wantSleep = true;
+		else if (what == "off" || what == "awake" || what == "wake")  wantSleep = false;
+		else
+		{
+			Console_Println(ST::format("unknown arg: {} (try on|off)", args.back()));
+			return;
+		}
+
+		if (!CanChangeSleepStatusForSoldier(&s))
+		{
+			Console_Println(ST::format("{}: sleep state can't change right now.", s.name));
+			return;
+		}
+
+		bool ok;
+		if (wantSleep)
+		{
+			ok = SetMercAsleep(s, /*give_warning=*/false);
+		}
+		else
+		{
+			ok = SetMercAwake(&s, /*fGiveWarning=*/FALSE, /*fForceHim=*/FALSE) != FALSE;
+		}
+
+		if (!ok)
+		{
+			Console_Println(ST::format("{}: refused (engine declined the change).", s.name));
+			return;
+		}
+		Console_Println(ST::format("{}: now {}.",
+			s.name, wantSleep ? "asleep" : "awake"));
+	}
+
+	// ============================================================
+	//   `map level`
+	// ============================================================
+
+	void cmdMapLevel(const std::vector<std::string>& args)
+	{
+		if (!inCampaignGate()) return;
+		if (args.size() < 3)
+		{
+			Console_Println(ST::format(
+				"usage: map level <0|1|2|3>  (current level: {})",
+				static_cast<int>(iCurrentMapSectorZ)));
+			return;
+		}
+		long z;
+		if (!parseInt(args[2], z) || z < 0 || z > 3)
+		{
+			Console_Println(ST::format(
+				"unknown level: {} (try 0 surface, 1..3 underground)", args[2]));
+			return;
+		}
+		JumpToLevel(static_cast<INT32>(z));
+		Console_Println(ST::format("Map level: {}.", static_cast<int>(z)));
+	}
+
+	// ============================================================
+	//   `map move` / `map cancel`
+	// ============================================================
+
+	// Translate MoveError to the same string the engine paints in
+	// ReportMapScreenMovementError. pMapErrorString carries pre-localized
+	// strings that may include %ls placeholders for soldier name; we don't
+	// substitute them, so messages with placeholders may look raw — that's
+	// rare in practice (most are unconditional like "the merc is in transit").
+	ST::string moveErrorString(MoveError code, const SOLDIERTYPE& s)
+	{
+		if (code <= ME_OK) return ST::string();
+		const auto idx = static_cast<int>(code);
+		ST::string raw = pMapErrorString[idx];
+		if (raw.empty())
+		{
+			return ST::format("{}: can't move (engine code {}).",
+				s.name, idx);
+		}
+		return ST::format("{}: {}", s.name, raw);
+	}
+
+	// Resolve which mercs to move. Order:
+	//   - explicit `from <name|tN>` → that single merc
+	//   - else multi-select → every selected merc
+	//   - else error (handled by caller via empty result)
+	// Vehicles are allowed (vehicles are slots t18..t20 and move via
+	// PlotPathForCharacter the same way mercs do).
+	std::vector<INT8> resolveMoveSet(const std::vector<std::string>& args, ST::string& err)
+	{
+		std::vector<INT8> out;
+		// Look for `from <name>` token.
+		for (std::size_t i = 2; i + 1 < args.size(); ++i)
+		{
+			if (lower(args[i]) == "from")
+			{
+				const INT8 slot = resolveCharSlot(args[i + 1], err);
+				if (slot < 0) return out;
+				out.push_back(slot);
+				return out;
+			}
+		}
+		for (INT8 i = 0; i < MAX_CHARACTER_COUNT; ++i)
+		{
+			if (gCharactersList[i].merc && gCharactersList[i].selected)
+				out.push_back(i);
+		}
+		if (out.empty())
+			err = ST::string(
+				"no mercs to move. Use 'team select <name>' first, or 'map move <sector> from <name>'.");
+		return out;
+	}
+
+	// Print one path's route + ETA. PathSt nodes carry strategic indices
+	// in uiSectorId, which round-trip through SGPSector::FromStrategicIndex.
+	// ETA comes from CalculateTravelTimeOfGroup against the group's
+	// waypoints, not GetPathTravelTimeDuringPlotting — the latter bails
+	// early when bSelectedDestChar/fTempPathAlreadyDrawn aren't set, both
+	// of which are GUI-mode flags the console never touches.
+	void printPathSummary(const SOLDIERTYPE& s)
+	{
+		PathSt* head = GetSoldierMercPathPtr(&s);
+		if (!head)
+		{
+			Console_Println(ST::format("  {}: no path.", s.name));
+			return;
+		}
+		ST::string route;
+		std::size_t hops = 0;
+		for (PathSt* n = head; n; n = n->pNext, ++hops)
+		{
+			if (!route.empty()) route += " -> ";
+			route += GetSectorIDString(
+				SGPSector::FromStrategicIndex(static_cast<UINT16>(n->uiSectorId)),
+				FALSE);
+		}
+		const GROUP* const grp = GetGroup(s.ubGroupID);
+		const INT32 mins = grp ? CalculateTravelTimeOfGroup(grp) : 0;
+		const INT32 hrs  = mins / 60;
+		const INT32 rem  = mins % 60;
+		ST::string eta;
+		if (hrs > 0)
+			eta = ST::format("{}h{02d}m", hrs, rem);
+		else
+			eta = ST::format("{}m", rem);
+		// hops counts entries including the start sector; movement legs
+		// are hops-1.
+		Console_Println(ST::format("  {}: {} ({} sector{}, ~{}).",
+			s.name, route,
+			hops > 0 ? hops - 1 : 0,
+			hops == 2 ? "" : "s",
+			eta));
+	}
+
+	void cmdMapMove(const std::vector<std::string>& args)
+	{
+		if (!inCampaignGate()) return;
+		if (args.size() < 3)
+		{
+			Console_Println(
+				"usage: map move <sector> [from <name|tN>] [keep-path]");
+			return;
+		}
+
+		// Pull flags + remaining args. The destination is the first arg
+		// that isn't a flag and isn't part of `from <name>`.
+		bool keepPath = false;
+		std::string destRaw;
+		for (std::size_t i = 2; i < args.size(); ++i)
+		{
+			const std::string a = lower(args[i]);
+			if (a == "keep-path")            { keepPath = true; continue; }
+			if (a == "from" && i + 1 < args.size()) { ++i; continue; }
+			if (destRaw.empty()) destRaw = args[i];
+		}
+		if (destRaw.empty())
+		{
+			Console_Println(
+				"usage: map move <sector> [from <name|tN>] [keep-path]");
+			return;
+		}
+
+		SGPSector dest;
+		ST::string err;
+		if (!resolveSectorArg(destRaw, dest, err))
+		{
+			Console_Println(err);
+			return;
+		}
+		if (dest.z != 0)
+		{
+			Console_Println(ST::format(
+				"can't plot to underground ({}). Exit underground via tactical first.",
+				GetSectorIDString(dest, FALSE)));
+			return;
+		}
+
+		std::vector<INT8> moveSet = resolveMoveSet(args, err);
+		if (moveSet.empty())
+		{
+			Console_Println(err);
+			return;
+		}
+
+		// Dedupe by movement group — plotting twice into the same group
+		// would just run the path-builder twice and stomp itself.
+		std::vector<INT8> deduped;
+		std::vector<UINT8> seenGroups;
+		for (INT8 slot : moveSet)
+		{
+			SOLDIERTYPE& s = *gCharactersList[slot].merc;
+			const UINT8 gid = s.ubGroupID;
+			if (gid != 0 && std::find(seenGroups.begin(), seenGroups.end(), gid) != seenGroups.end())
+				continue;
+			if (gid != 0) seenGroups.push_back(gid);
+			deduped.push_back(slot);
+		}
+
+		// Validate every merc in the move set first. The verb's contract
+		// is "either everyone goes or no one goes and you hear why."
+		for (INT8 slot : deduped)
+		{
+			SOLDIERTYPE& s = *gCharactersList[slot].merc;
+			const MoveError code = CanEntireMovementGroupMercIsInMove(s);
+			if (code != ME_OK)
+			{
+				Console_Println(moveErrorString(code, s));
+				return;
+			}
+			if (s.sSector == dest)
+			{
+				Console_Println(ST::format("{}: already in {}.",
+					s.name, GetSectorIDString(dest, FALSE)));
+				return;
+			}
+		}
+
+		// Plot. Replace semantics by default (CancelPathForCharacter
+		// before plotting); keep-path appends. PlotPathForCharacter only
+		// touches pMercPath; the strategic clock acts on the *group's*
+		// waypoint list, so without RebuildWayPointsForGroupPath the path
+		// is dead data and the group never moves. The GUI runs the same
+		// rebuild via RebuildWayPointsForAllSelectedCharsGroups on commit;
+		// we replicate it here, deduped by group.
+		std::size_t plotted = 0;
+		for (INT8 slot : deduped)
+		{
+			SOLDIERTYPE& s = *gCharactersList[slot].merc;
+			if (!keepPath) CancelPathForCharacter(&s);
+			PlotPathForCharacter(s, dest, /*tactical_traversal=*/false);
+			PathSt* const head = GetSoldierMercPathPtr(&s);
+			if (!head) continue;
+			GROUP* const grp = GetGroup(s.ubGroupID);
+			if (grp) RebuildWayPointsForGroupPath(head, *grp);
+			++plotted;
+		}
+		if (plotted == 0)
+		{
+			Console_Println(
+				"Plotting failed (no path attached). Underground or unreachable destination?");
+			return;
+		}
+
+		Console_Println(ST::format(
+			"Plotted move for {} group{} to {}.",
+			plotted, plotted == 1 ? "" : "s",
+			GetSectorIDString(dest, FALSE)));
+		for (INT8 slot : deduped)
+		{
+			SOLDIERTYPE& s = *gCharactersList[slot].merc;
+			printPathSummary(s);
+		}
+		if (giTimeCompressMode == TIME_COMPRESS_X0)
+			Console_Println(
+				"Time is paused — use 'compress fast' to start moving.");
+	}
+
+	void cmdMapCancel(const std::vector<std::string>& args)
+	{
+		if (!inCampaignGate()) return;
+		if (args.size() < 3)
+		{
+			CancelPathsOfAllSelectedCharacters();
+			Console_Println("Cancelled paths for all selected mercs.");
+			return;
+		}
+		ST::string err;
+		const INT8 slot = resolveCharSlot(joinFrom(args, 2), err);
+		if (slot < 0) { Console_Println(err); return; }
+		SOLDIERTYPE& s = *gCharactersList[slot].merc;
+		if (!GetSoldierMercPathPtr(&s))
+		{
+			Console_Println(ST::format("{}: no path to cancel.", s.name));
+			return;
+		}
+		CancelPathForCharacter(&s);
+		Console_Println(ST::format("{}: path cancelled.", s.name));
+	}
+
+	// ============================================================
+	//   `compress` / `tactical` / `quit` / `log`
+	// ============================================================
+
+	void cmdCompress(const std::vector<std::string>& args)
+	{
+		if (!inCampaignGate()) return;
+		if (args.size() < 2)
+		{
+			Console_Println(ST::format(
+				"compression: {}. Use 'compress <off|fast|faster|fastest>'.",
+				compressionState()));
+			return;
+		}
+		const std::string what = lower(args[1]);
+		INT32 want;
+		if      (what == "off"     || what == "stop" || what == "pause")  want = TIME_COMPRESS_X0;
+		else if (what == "x1"      || what == "real" || what == "normal") want = TIME_COMPRESS_X1;
+		else if (what == "fast"    || what == "5"    || what == "5min")   want = TIME_COMPRESS_5MINS;
+		else if (what == "faster"  || what == "30"   || what == "30min")  want = TIME_COMPRESS_30MINS;
+		else if (what == "fastest" || what == "60"   || what == "hour")   want = TIME_COMPRESS_60MINS;
+		else
+		{
+			Console_Println(ST::format(
+				"unknown speed: {} (try off|fast|faster|fastest)", args[1]));
+			return;
+		}
+
+		// X1 (real time) only exists in tactical. SetGameTimeCompressionLevel
+		// silently remaps X1→X0 in mapscreen; surfacing that as a no-op is
+		// confusing, so name it.
+		if (want == TIME_COMPRESS_X1 && guiCurrentScreen != GAME_SCREEN)
+		{
+			Console_Println(
+				"x1 (real time) is only available in tactical. "
+				"On mapscreen use off | fast | faster | fastest.");
+			return;
+		}
+
+		if (want == TIME_COMPRESS_X0)
+		{
+			// Preserves giTimeCompressMode for resume; flips
+			// gfTimeCompressionOn off.
+			StopTimeCompression();
+		}
+		else
+		{
+			// Direct set is the right entry — engine handles
+			// AllowedToTimeCompress check, prebattle/combat blocks, and
+			// the X1 remap. Step-loop via Increase/Decrease can't reach
+			// arbitrary targets in mapscreen because both helpers skip X1.
+			SetGameTimeCompressionLevel(static_cast<UINT32>(want));
+		}
+		Console_Println(ST::format("Compression: {}.", compressionState()));
+	}
+
+	void cmdTactical()
+	{
+		switch (guiCurrentScreen)
+		{
+			case GAME_SCREEN:
+				Console_Println("Already in tactical.");
+				return;
+			case MAP_SCREEN:
+				if (!AllowedToExitFromMapscreenTo(MAP_EXIT_TO_TACTICAL))
+				{
+					Console_Println(
+						"Can't switch to tactical from this screen state.");
+					return;
+				}
+				RequestTriggerExitFromMapscreen(MAP_EXIT_TO_TACTICAL);
+				Console_Println("Switching to tactical.");
+				return;
+			case LAPTOP_SCREEN:
+				// Laptop's exit machinery is file-static; from outside we
+				// can't drive it cleanly. Send the user back through
+				// mapscreen, where the same verb works.
+				Console_Println(
+					"Close laptop first (click its Exit button via 'g click', "
+					"or use the Exit option in the laptop UI), then run 'tactical'.");
+				return;
+			default:
+				Console_Println("Can't switch to tactical from this screen.");
+				return;
+		}
+	}
+
+	void cmdQuit()
+	{
+		// `quit` opens the options screen (Save / Load / Quit live there).
+		// We stop short of actually quitting — the user makes the final
+		// decision through the options panel, where `g click` can hit the
+		// Quit button.
+		if (guiCurrentScreen == MAP_SCREEN)
+		{
+			if (!AllowedToExitFromMapscreenTo(MAP_EXIT_TO_OPTIONS))
+			{
+				Console_Println("Can't open the options screen right now.");
+				return;
+			}
+			RequestTriggerExitFromMapscreen(MAP_EXIT_TO_OPTIONS);
+			Console_Println("Opening options screen (Save / Load / Quit).");
+			return;
+		}
+		Console_Println(
+			"Open the options screen via the mapscreen — switch with 'team' or 'map' first.");
+	}
+
+	void cmdLog(const std::vector<std::string>& args)
+	{
+		std::size_t n = MAX_MESSAGES_ON_MAP_BOTTOM;
+		if (args.size() >= 2)
+		{
+			long v;
+			if (!parseInt(args[1], v) || v <= 0)
+			{
+				Console_Println(ST::format(
+					"usage: log [N]  (default {})", MAX_MESSAGES_ON_MAP_BOTTOM));
+				return;
+			}
+			n = static_cast<std::size_t>(v);
+		}
+		std::size_t shown = 0;
+		Console_ForEachRecentMapMessage(n,
+			[&](const ST::string& s) {
+				Console_Println(ST::format("  {}", s));
+				++shown;
+			});
+		if (shown == 0)
+		{
+			Console_Println("No strategic messages yet.");
+		}
+		else
+		{
+			Console_Println(ST::format("({} message{} shown.)",
+				shown, shown == 1 ? "" : "s"));
+		}
+	}
 }
 
 void Cmd_Team(const std::vector<std::string>& args)
@@ -1075,11 +1642,14 @@ void Cmd_Team(const std::vector<std::string>& args)
 	ensureMapscreen();
 	if (args.size() < 2) { cmdTeamSummary(); return; }
 	const std::string sub = lower(args[1]);
-	if (sub == "list") { cmdTeamList(args); return; }
-	if (sub == "merc") { cmdTeamMerc(args); return; }
+	if (sub == "list")   { cmdTeamList(args);   return; }
+	if (sub == "merc")   { cmdTeamMerc(args);   return; }
+	if (sub == "select") { cmdTeamSelect(args); return; }
+	if (sub == "sleep")  { cmdTeamSleep(args);  return; }
 
 	Console_Println(ST::format(
-		"unknown subcommand: team {} (try 'team', 'team list', 'team merc <name|tN>')",
+		"unknown subcommand: team {} (try 'team', 'team list', 'team merc <name|tN>', "
+		"'team select <name|tN> [+|-]', 'team sleep <name|tN> <on|off>')",
 		args[1]));
 }
 
@@ -1113,9 +1683,48 @@ void Cmd_Map(const std::vector<std::string>& args)
 	if (sub == "list")   { cmdMapList(args);   return; }
 	if (sub == "town")   { cmdMapTown(args);   return; }
 	if (sub == "mine")   { cmdMapMine(args);   return; }
+	if (sub == "level")  { cmdMapLevel(args);  return; }
+	if (sub == "move")   { cmdMapMove(args);   return; }
+	if (sub == "cancel") { cmdMapCancel(args); return; }
+
+	// Shorthand: `map b9`, `map drassen`, `map here` — treat the arg as
+	// a sector id and dispatch to `map sector`. Lets the user skip the
+	// `sector` filler word once they've heard about a sector.
+	{
+		SGPSector probe;
+		ST::string sectorErr;
+		if (resolveSectorArg(joinFrom(args, 1), probe, sectorErr))
+		{
+			std::vector<std::string> rewritten = { args[0], "sector" };
+			rewritten.insert(rewritten.end(), args.begin() + 1, args.end());
+			cmdMapSector(rewritten);
+			return;
+		}
+	}
 
 	Console_Println(ST::format(
 		"unknown subcommand: map {} (try 'map', 'map sector <id>', "
-		"'map list <towns|mines|sams|militia|enemies>', 'map town <name>', 'map mine <town>')",
+		"'map list <towns|mines|sams|militia|enemies>', 'map town <name>', 'map mine <town>', "
+		"'map level <0..3>', 'map move <sector> [from <name>] [keep-path]', 'map cancel [<name>]')",
 		args[1]));
+}
+
+void Cmd_Compress(const std::vector<std::string>& args)
+{
+	cmdCompress(args);
+}
+
+void Cmd_Tactical(const std::vector<std::string>&)
+{
+	cmdTactical();
+}
+
+void Cmd_Quit(const std::vector<std::string>&)
+{
+	cmdQuit();
+}
+
+void Cmd_Log(const std::vector<std::string>& args)
+{
+	cmdLog(args);
 }

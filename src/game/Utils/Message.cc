@@ -1,5 +1,6 @@
 #include "Accessibility.h"
 #include "Buffer.h"
+#include "Console.h"
 #include "Debug.h"
 #include "Directories.h"
 #include "Font.h"
@@ -388,6 +389,12 @@ void MapScreenMessage(UINT16 usColor, UINT8 ubPriority, const ST::string& str)
 	}
 
 	if (DestString.empty()) return;
+
+	// Mirror the unwrapped message into the SR console's ring so the user
+	// can replay recent strategic events with `log [N]`. Hooking here (post
+	// priority filter, pre line-wrap) means each logical message is one
+	// ring entry, not N wrapped fragments.
+	Console_CaptureMapMessage(DestString);
 
 	BOOLEAN fNewString = TRUE;
 	for (auto const& codepoints : LineWrap(MAP_SCREEN_MESSAGE_FONT, MAP_LINE_WIDTH, DestString))
