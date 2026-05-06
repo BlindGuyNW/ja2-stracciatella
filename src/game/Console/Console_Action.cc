@@ -280,17 +280,42 @@ void Cmd_Move(const std::vector<std::string>& args)
 	}
 	if (args.size() < 2)
 	{
-		Console_Println("usage: move <name> | move <dir> <steps> | move <col,row>");
+		Console_Println("usage: move <target> [run]");
+		Console_Println("  targets: <name> | <dir> <steps> | <col,row>");
 		return;
 	}
 
 	Target tgt;
 	ST::string err;
-	if (parseTarget(args, 1, sel, tgt, err) == 0)
+	const int consumed = parseTarget(args, 1, sel, tgt, err);
+	if (consumed == 0)
 	{
 		Console_Println(err);
 		return;
 	}
+
+	// Optional trailing "run" flag. Per-action like the engine's shift+click,
+	// not a persistent mode — pace only matters for this one move.
+	bool wantRun = false;
+	const std::size_t after = static_cast<std::size_t>(1 + consumed);
+	if (after < args.size())
+	{
+		if (args[after] == "run")
+		{
+			wantRun = true;
+			if (after + 1 < args.size())
+			{
+				Console_Println(ST::format("unexpected token '{}' after 'run'", args[after + 1]));
+				return;
+			}
+		}
+		else
+		{
+			Console_Println(ST::format("unexpected token '{}' (try 'run')", args[after]));
+			return;
+		}
+	}
+
 	if (tgt.gridno == sel->sGridNo)
 	{
 		Console_Println("Already there.");
@@ -298,6 +323,22 @@ void Cmd_Move(const std::vector<std::string>& args)
 	}
 
 	refreshMoveModeForRealtime(sel);
+	if (wantRun)
+	{
+		// Mirror Handle_UI.cc:1417-1425 — fast bit applies to any stance,
+		// but only WALKING promotes to RUNNING. SWAT and CRAWL keep their
+		// mode (the engine can't actually speed them up; the bit is a no-op
+		// there but harmless, and matches what the run-menu button does).
+		sel->fUIMovementFast = TRUE;
+		if (sel->usUIMovementMode == WALKING)
+		{
+			sel->usUIMovementMode = RUNNING;
+		}
+	}
+	else
+	{
+		sel->fUIMovementFast = FALSE;
+	}
 	Soldier{sel}.removePendingAction();
 
 	// If the destination tile carries an openable structure (door, locker,
@@ -341,17 +382,18 @@ void Cmd_Move(const std::vector<std::string>& args)
 	{
 		// Pending action fires when the merc reaches the approach tile.
 		StartInteractiveObject(tgt.gridno, *intStruct, *sel, intDir);
-		Console_Println("Approaching to interact.");
+		Console_Println(wantRun ? "Running to interact." : "Approaching to interact.");
 		return;
 	}
 
+	const char* const verb = wantRun ? "Running" : "Moving";
 	if (tgt.soldier)
 	{
-		Console_Println(ST::format("Moving toward {}.", tgt.soldier->name));
+		Console_Println(ST::format("{} toward {}.", verb, tgt.soldier->name));
 	}
 	else
 	{
-		Console_Println("Moving.");
+		Console_Println(ST::format("{}.", verb));
 	}
 }
 
@@ -371,16 +413,38 @@ void Cmd_MoveAll(const std::vector<std::string>& args)
 	}
 	if (args.size() < 2)
 	{
-		Console_Println("usage: move-all <name> | move-all <dir> <steps> | move-all <col,row>");
+		Console_Println("usage: move-all <target> [run]");
+		Console_Println("  targets: <name> | <dir> <steps> | <col,row>");
 		return;
 	}
 
 	Target tgt;
 	ST::string err;
-	if (parseTarget(args, 1, sel, tgt, err) == 0)
+	const int consumed = parseTarget(args, 1, sel, tgt, err);
+	if (consumed == 0)
 	{
 		Console_Println(err);
 		return;
+	}
+
+	bool wantRun = false;
+	const std::size_t after = static_cast<std::size_t>(1 + consumed);
+	if (after < args.size())
+	{
+		if (args[after] == "run")
+		{
+			wantRun = true;
+			if (after + 1 < args.size())
+			{
+				Console_Println(ST::format("unexpected token '{}' after 'run'", args[after + 1]));
+				return;
+			}
+		}
+		else
+		{
+			Console_Println(ST::format("unexpected token '{}' (try 'run')", args[after]));
+			return;
+		}
 	}
 
 	const INT32 squad = CurrentSquad();
@@ -406,9 +470,22 @@ void Cmd_MoveAll(const std::vector<std::string>& args)
 		                                  { ++skipped; continue; }
 
 		AdjustNoAPToFinishMove(s, FALSE);
-		s->fUIMovementFast  = FALSE;
+		// Mirror the all-move-fast branch in Handle_UI.cc:1657-1666: when the
+		// player picks the run variant, every squad member gets the fast bit
+		// and standers promote to RUNNING. Crouched/prone squadmates keep
+		// their movement mode (the fast bit is a no-op there but matches
+		// engine behavior).
 		s->usUIMovementMode = GetMoveStateBasedOnStance(
 			s, gAnimControl[s->usAnimState].ubEndHeight);
+		if (wantRun)
+		{
+			s->fUIMovementFast = TRUE;
+			if (s->usUIMovementMode == WALKING) s->usUIMovementMode = RUNNING;
+		}
+		else
+		{
+			s->fUIMovementFast = FALSE;
+		}
 
 		Soldier{s}.removePendingAction();
 
@@ -425,8 +502,71 @@ void Cmd_MoveAll(const std::vector<std::string>& args)
 
 	gfGetNewPathThroughPeople = FALSE;
 
-	Console_Println(ST::format("Group move queued: {} moving, {} skipped.",
-	                           moved, skipped));
+	Console_Println(ST::format("Group {} queued: {} {}, {} skipped.",
+	                           wantRun ? "run" : "move",
+	                           moved,
+	                           wantRun ? "running" : "moving",
+	                           skipped));
+}
+
+void Cmd_Climb(const std::vector<std::string>&)
+{
+	SOLDIERTYPE* const sel = GetSelectedMan();
+	if (!sel) { Console_Println("No merc selected."); return; }
+
+	// Mirror BtnClimbCallback (Interface_Panels.cc:2086): try down → up →
+	// fence in priority order. Same dispatch the panel "Climb" button uses,
+	// so 'climb' is the one verb for roof access (both directions) and
+	// fence-hopping. The engine's Find* helpers auto-detect direction.
+	UINT8 dir;
+
+	if (FindLowerLevel(sel, &dir))
+	{
+		const INT8 ap = GetAPsToClimbRoof(sel, TRUE);
+		if (!EnoughPoints(sel, ap, 0, TRUE))
+		{
+			Console_Println(ST::format(
+				"{} needs {} AP to climb down but has {}.",
+				sel->name, ap, sel->bActionPoints));
+			return;
+		}
+		BeginSoldierClimbDownRoof(sel);
+		Console_Println("Climbing down.");
+		return;
+	}
+
+	if (FindHigherLevel(sel, &dir))
+	{
+		const INT8 ap = GetAPsToClimbRoof(sel, FALSE);
+		if (!EnoughPoints(sel, ap, 0, TRUE))
+		{
+			Console_Println(ST::format(
+				"{} needs {} AP to climb up but has {}.",
+				sel->name, ap, sel->bActionPoints));
+			return;
+		}
+		BeginSoldierClimbUpRoof(sel);
+		Console_Println("Climbing up.");
+		return;
+	}
+
+	if (FindFenceJumpDirection(sel, &dir))
+	{
+		const INT8 ap = GetAPsToJumpFence(sel);
+		if (!EnoughPoints(sel, ap, 0, TRUE))
+		{
+			Console_Println(ST::format(
+				"{} needs {} AP to hop the fence but has {}.",
+				sel->name, ap, sel->bActionPoints));
+			return;
+		}
+		BeginSoldierClimbFence(sel);
+		Console_Println("Hopping fence.");
+		return;
+	}
+
+	Console_Println(ST::format(
+		"{} has no roof access or fence to climb here.", sel->name));
 }
 
 void Cmd_Fire(const std::vector<std::string>& args)
