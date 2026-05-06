@@ -230,7 +230,7 @@ void Cmd_Turn(const std::vector<std::string>& args)
 		}
 		else
 		{
-			const INT16 dist = PythSpacesAway(sel->sGridNo, tgt.gridno);
+			const INT16 dist = SpacesAway(sel->sGridNo, tgt.gridno);
 			const UINT8 dir  = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(sel->sGridNo, tgt.gridno));
 			const char* dw;
 			switch (dir)
@@ -657,7 +657,7 @@ void Cmd_Pickup(const std::vector<std::string>& args)
 	}
 	else
 	{
-		const INT16 dist = PythSpacesAway(sel->sGridNo, gridno);
+		const INT16 dist = SpacesAway(sel->sGridNo, gridno);
 		Console_Println(ST::format("Approaching {} tile{} to pick up.",
 		                           dist, dist == 1 ? "" : "s"));
 	}
@@ -1105,7 +1105,7 @@ void Cmd_Give(const std::vector<std::string>& args)
 	}
 	else
 	{
-		const INT16 dist = PythSpacesAway(giver->sGridNo, actionGridNo);
+		const INT16 dist = SpacesAway(giver->sGridNo, actionGridNo);
 		Console_Println(ST::format(
 			"Approaching {} ({} tile{}) to hand over {}.",
 			recipient->name, dist, dist == 1 ? "" : "s", itemName));
@@ -1481,7 +1481,7 @@ void Cmd_Talk(const std::vector<std::string>& args)
 		EVENT_InternalGetNewSoldierPath(sel, sweetSpot, sel->usUIMovementMode,
 		                                TRUE, sel->fNoAPToFinishMove);
 
-		const INT16 dist = PythSpacesAway(sel->sGridNo, sweetSpot);
+		const INT16 dist = SpacesAway(sel->sGridNo, sweetSpot);
 		Console_Println(ST::format(
 			"Approaching {} ({} tile{}) to talk.",
 			target->name, dist, dist == 1 ? "" : "s"));

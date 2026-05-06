@@ -304,7 +304,7 @@ namespace
 				ItemPile p{};
 				p.gridno   = wi.sGridNo;
 				p.level    = static_cast<INT8>(wi.ubLevel);
-				p.distance = PythSpacesAway(observer.sGridNo, wi.sGridNo);
+				p.distance = SpacesAway(observer.sGridNo, wi.sGridNo);
 				out.push_back(std::move(p));
 			}
 			out[idx].items.push_back(wi.o.usItem);
@@ -379,7 +379,7 @@ namespace
 
 			ListedDoor d{};
 			d.gridno   = g;
-			d.distance = PythSpacesAway(observer.sGridNo, g);
+			d.distance = SpacesAway(observer.sGridNo, g);
 
 			// Perceived open/closed lives in DOOR_STATUS; absence means the
 			// player hasn't observed this door yet.
@@ -453,7 +453,7 @@ namespace
 			STRUCTURE* const s = findStructureExcluding(
 				g, STRUCTURE_OPENABLE, STRUCTURE_ANYDOOR | STRUCTURE_SWITCH);
 			if (!s) continue;
-			out.push_back({ PythSpacesAway(observer.sGridNo, g), g });
+			out.push_back({ SpacesAway(observer.sGridNo, g), g });
 		}
 		std::sort(out.begin(), out.end(),
 			[](const ListedContainer& a, const ListedContainer& b)
@@ -505,7 +505,7 @@ namespace
 			if (t->ubID == observer.ubID)        continue;
 			if (t->bTeam != CIV_TEAM)            continue;
 			if (!ConsoleVis::IsKnownSoldier(*t)) continue;
-			out.push_back({ t, PythSpacesAway(observer.sGridNo, t->sGridNo) });
+			out.push_back({ t, SpacesAway(observer.sGridNo, t->sGridNo) });
 		}
 		std::sort(out.begin(), out.end(),
 			[](const ListedSoldier& a, const ListedSoldier& b)
@@ -569,7 +569,7 @@ namespace
 			if (!GetExitGrid(g, &xg)) continue;
 			ListedExit e{};
 			e.gridno      = g;
-			e.distance    = PythSpacesAway(origin, g);
+			e.distance    = SpacesAway(origin, g);
 			e.hasGridDest = true;
 			e.dest        = xg.ubGotoSector;
 			out.push_back(e);
@@ -588,7 +588,7 @@ namespace
 			INT16 bestDist   = INT16_MAX;
 			for (INT16 g : tiles)
 			{
-				const INT16 d = PythSpacesAway(origin, g);
+				const INT16 d = SpacesAway(origin, g);
 				if (d < bestDist) { bestDist = d; bestGridNo = g; }
 			}
 			if (bestGridNo == NOWHERE) return;
@@ -682,7 +682,7 @@ namespace
 			const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(origin, g));
 			if (dir >= NUM_WORLD_DIRECTIONS) continue;
 
-			const INT16 dist = PythSpacesAway(origin, g);
+			const INT16 dist = SpacesAway(origin, g);
 			Frontier& f = out.byDir[dir];
 			if (!f.present || dist < f.closestDist)
 			{
@@ -748,7 +748,7 @@ namespace
 
 			UINT8 clusterTypes = 0;
 			INT16 closestG = g;
-			INT16 closestDist = PythSpacesAway(observer.sGridNo, g);
+			INT16 closestDist = SpacesAway(observer.sGridNo, g);
 			int   count = 0;
 
 			std::vector<INT16> stack;
@@ -765,7 +765,7 @@ namespace
 				seen[cur] = true;
 				++count;
 				clusterTypes |= e;
-				const INT16 d = PythSpacesAway(observer.sGridNo, cur);
+				const INT16 d = SpacesAway(observer.sGridNo, cur);
 				if (d < closestDist) { closestDist = d; closestG = cur; }
 
 				// 8-connected neighbours, with a column-delta guard so we
@@ -835,7 +835,7 @@ namespace
 			if (!player && !enemy) continue;
 			ListedMine m{};
 			m.gridno   = g;
-			m.distance = PythSpacesAway(observer.sGridNo, g);
+			m.distance = SpacesAway(observer.sGridNo, g);
 			// Player flag wins on the rare both-set case: a friendly mine
 			// you laid on a tile that already had a known enemy mine is
 			// still safe to walk through if you know the trigger pattern.
@@ -1399,7 +1399,7 @@ void Cmd_Tile(const std::vector<std::string>& args)
 	}
 	else if (observer)
 	{
-		const INT16 dist = PythSpacesAway(observer->sGridNo, tgt.gridno);
+		const INT16 dist = SpacesAway(observer->sGridNo, tgt.gridno);
 		const UINT8 dir  = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer->sGridNo, tgt.gridno));
 		label = dist == 0 ? ST::string("Tile here") : ST::format("Tile {} {}", dist, directionWord(dir));
 	}
@@ -1536,7 +1536,7 @@ void Cmd_Cover(const std::vector<std::string>& args)
 		ST::string err;
 		if (parseTarget(args, 1, sel, tgt, err) == 0) { Console_Println(err); return; }
 		gridno = tgt.gridno;
-		const INT16 dist = PythSpacesAway(sel->sGridNo, gridno);
+		const INT16 dist = SpacesAway(sel->sGridNo, gridno);
 		const UINT8 dir  = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(sel->sGridNo, gridno));
 		label = dist == 0
 			? ST::string("here")

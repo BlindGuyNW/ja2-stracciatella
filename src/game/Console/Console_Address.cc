@@ -216,7 +216,7 @@ void enumerateHostiles(const SOLDIERTYPE& observer, std::vector<ListedSoldier>& 
 		if (t->ubID == observer.ubID) continue;
 		if (!IsHostileToOurTeam(*t))   continue;
 		if (!ConsoleVis::IsKnownSoldier(*t)) continue;
-		out.push_back({ t, PythSpacesAway(observer.sGridNo, t->sGridNo) });
+		out.push_back({ t, SpacesAway(observer.sGridNo, t->sGridNo) });
 	}
 	sortByDistance(out);
 }
@@ -229,7 +229,7 @@ void enumerateTeammates(const SOLDIERTYPE& observer, std::vector<ListedSoldier>&
 		if (t->ubID == observer.ubID)                       continue;
 		if (t->bTeam != OUR_TEAM)                            continue;
 		if (!t->bActive || t->bLife <= 0 || !t->bInSector)   continue;
-		out.push_back({ t, PythSpacesAway(observer.sGridNo, t->sGridNo) });
+		out.push_back({ t, SpacesAway(observer.sGridNo, t->sGridNo) });
 	}
 	sortByDistance(out);
 }
