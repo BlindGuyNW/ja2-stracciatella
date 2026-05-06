@@ -3,6 +3,7 @@
 #include "Console_Aim.h"
 #include "Console_Bobbyr.h"
 #include "Console_Cheat.h"
+#include "Console_Debug.h"
 #include "Console_Email.h"
 #include "Console_Gui.h"
 #include "Console_Imp.h"
@@ -79,6 +80,7 @@ namespace
 		{ "g",         &Cmd_Gui,        "g list | g click <id> — enumerate or click visible buttons" },
 		{ "r",         &Cmd_Rows,       "r list | r click <id> — enumerate or click rendered text rows" },
 		{ "cheat",     &Cmd_Cheat,      "cheat | cheat <name> — dev unlocks (e.g. 'cheat bobbyr')"  },
+		{ "debug",     &Cmd_Debug,      "debug [summary|structures|items|world] — world-state diagnostics" },
 	};
 
 	void cmdHelp(const ArgList&)

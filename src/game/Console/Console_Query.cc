@@ -370,8 +370,12 @@ namespace
 		{
 			STRUCTURE* const s = FindStructure(g, STRUCTURE_ANYDOOR);
 			if (!s) continue;
-			// Dedupe multi-tile doors: only count the base tile.
-			if (s->sBaseGridNo != g) continue;
+			// Dedupe multi-tile doors: only count the base tile. The engine
+			// flags it explicitly via STRUCTURE_BASE_TILE; sBaseGridNo is
+			// left at default-init (0) on bases and only set on the
+			// non-base satellite records (Structure.cc:720), so testing
+			// `sBaseGridNo == g` would only match at gridno 0.
+			if (!(s->fFlags & STRUCTURE_BASE_TILE)) continue;
 
 			ListedDoor d{};
 			d.gridno   = g;
@@ -416,9 +420,12 @@ namespace
 	{
 		for (STRUCTURE* s = gpWorldLevelData[g].pStructureHead; s; s = s->pNext)
 		{
-			if (s->sBaseGridNo != g)   continue;
-			if (!(s->fFlags & wanted)) continue;
-			if (s->fFlags & excluded)  continue;
+			// Skip non-base records of multi-tile structures so we don't
+			// count one container three times. STRUCTURE_BASE_TILE is the
+			// engine's canonical base-tile flag (Structure.cc:401).
+			if (!(s->fFlags & STRUCTURE_BASE_TILE)) continue;
+			if (!(s->fFlags & wanted))              continue;
+			if (s->fFlags & excluded)               continue;
 			return s;
 		}
 		return nullptr;
@@ -1176,9 +1183,10 @@ namespace
 
 			// Door — only at the base tile so multi-tile doors don't
 			// double-report. Excluded from the openable/window/fence
-			// checks below.
+			// checks below. STRUCTURE_BASE_TILE is the canonical base-tile
+			// flag; sBaseGridNo is unset on bases (see enumerateDoors).
 			STRUCTURE* const door = FindStructure(g, STRUCTURE_ANYDOOR);
-			if (door && door->sBaseGridNo == g)
+			if (door && (door->fFlags & STRUCTURE_BASE_TILE))
 			{
 				out.push_back({s, describeDoor(*door, g)});
 			}
