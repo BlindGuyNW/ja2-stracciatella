@@ -5,6 +5,7 @@
 #include "AIMMembers.h"
 #include "Assignments.h"
 #include "ContentManager.h"
+#include "EDT.h"
 #include "Finances.h"
 #include "GameInstance.h"
 #include "ItemModel.h"
@@ -959,6 +960,306 @@ namespace
 		Console_Println(ST::format("Contacting {} …",
 			p.zNickname.empty() ? p.zName : p.zNickname));
 	}
+
+	// ----- Section gate / navigation helpers --------------------------
+	// All laptop-site verbs gate on being in the relevant section; when
+	// the user is on a sibling AIM page we transition them to the target
+	// subpage just like clicking the section's bottom-bar button. See
+	// memory feedback_laptop_verb_gating.md for the policy.
+	bool aimSectionGate()
+	{
+		if (inAimSection()) return true;
+		Console_Println("Open the AIM site first (try 'web aim').");
+		return false;
+	}
+
+	void enterAimSubpage(LaptopMode mode)
+	{
+		if (guiCurrentLaptopMode != mode)
+		{
+			guiCurrentLaptopMode = mode;
+		}
+	}
+
+	// ----- aim links --------------------------------------------------
+	// Bare lists the three sites and lands on the Links page (lateral
+	// nav from any AIM sibling). With an arg, drives the click —
+	// GoToWebPage is the same call SelectLinkRegionCallBack issues at
+	// AIMLinks.cc:103, so first-visit bookmark side effects fire via the
+	// destination's EnterXxx (`SetBookMark` in BobbyR.cc:226 / Funeral.cc:158
+	// / Insurance.cc:92).
+	void cmdLinks(const std::vector<std::string>& args)
+	{
+		if (!aimSectionGate()) return;
+
+		if (args.size() < 3)
+		{
+			enterAimSubpage(LAPTOP_MODE_AIM_LINKS);
+			Console_Println("AIM Links — three external sites:");
+			Console_Println("  bobby      — Bobby Ray's Gun Shop");
+			Console_Println("  funeral    — AIM Mortuary");
+			Console_Println("  insurance  — AIM Insurance");
+			Console_Println("Use 'aim links <name>' to follow one "
+				"(adds the bookmark on first visit).");
+			return;
+		}
+
+		const std::string s = lower(args[2]);
+		INT32       id = -1;
+		const char* siteName = nullptr;
+		if (s == "bobby" || s == "bobbyr" || s == "bobbyrayguns" ||
+			s == "bobbyray" || s == "bobby's" || s == "guns")
+		{
+			id = BOBBYR_BOOKMARK; siteName = "Bobby Ray's Gun Shop";
+		}
+		else if (s == "funeral" || s == "mortuary")
+		{
+			id = FUNERAL_BOOKMARK; siteName = "AIM Mortuary";
+		}
+		else if (s == "insurance")
+		{
+			id = INSURANCE_BOOKMARK; siteName = "AIM Insurance";
+		}
+		else
+		{
+			Console_Println(ST::format(
+				"unknown link: {} (try bobby, funeral, insurance)", args[2]));
+			return;
+		}
+
+		GoToWebPage(id);
+		Console_Println(ST::format("Loading {} …", siteName));
+	}
+
+	// ----- Reading-room section tables --------------------------------
+	// Record indices into the AIM_TEXT and AIM_POLICIES EDTs. The enums
+	// these come from are file-local in AIMHistory.cc / AIMPolicies.cc
+	// and not exported, so we mirror them here as integer literals. The
+	// .edt layout is fixed by the data files, not subject to drift.
+
+	// AIM_TEXT (`/aimhist.edt`) layout — see AIMHistory.cc:72-95 and the
+	// per-page case statement at AIMHistory.cc:153-196.
+	constexpr int kHistBeg[] = { 7, 8 };          // IN_THE_BEGINNING_1, _2
+	constexpr int kHistIsl[] = { 10, 11 };        // THE_ISLAND_METAVIRA_1, _2
+	constexpr int kHistGus[] = { 13, 14 };        // GUS_TARBALLS_1, _2
+	constexpr int kHistFnd[] = { 16, 17 };        // WORD_FROM_FOUNDER_1, COLONEL_MOHANNED
+	constexpr int kHistInc[] = { 19, 20, 21, 22 };// INCORPORATION_1, _2, DUNN_AND_BRADROAD, INCORPORATION_3
+
+	struct HistSec { int title; const int* body; std::size_t bodyLen; };
+	constexpr HistSec kHist[] = {
+		{ 6,  kHistBeg, std::size(kHistBeg) }, // IN_THE_BEGINNING
+		{ 9,  kHistIsl, std::size(kHistIsl) }, // THE_ISLAND_METAVIRA
+		{ 12, kHistGus, std::size(kHistGus) }, // GUS_TARBALLS
+		{ 15, kHistFnd, std::size(kHistFnd) }, // WORD_FROM_FOUNDER
+		{ 18, kHistInc, std::size(kHistInc) }, // INCORPORATION
+	};
+
+	// AIM_POLICIES (`/aimpol.edt`) layout — see AIMPolicies.cc:75-134
+	// (enum) and AIMPolicies.cc:251-351 (per-page case statement). The
+	// GUI's TOC button list is at AIMPolicies.cc:405-414.
+	constexpr int kPolStmt[] = { 1, 2 };
+	constexpr int kPolDef[]  = { 4, 5, 6, 7 };
+	constexpr int kPolLen[]  = { 9, 10, 11, 12, 13 };
+	constexpr int kPolLoc[]  = { 15, 16, 17, 18, 19, 20, 21 };
+	constexpr int kPolExt[]  = { 23, 24, 25 };
+	constexpr int kPolPay[]  = { 27 };
+	constexpr int kPolEng[]  = { 29, 30, 31 };
+	constexpr int kPolTerm[] = { 33, 34, 35, 36 };
+	constexpr int kPolEqu[]  = { 38, 39 };
+	constexpr int kPolMed[]  = { 41, 42, 43, 44, 45 };
+
+	struct PolSec { int title; const int* body; std::size_t bodyLen; };
+	constexpr PolSec kPol[] = {
+		{  0, kPolStmt, std::size(kPolStmt) }, // AIM_STATEMENT_OF_POLICY
+		{  3, kPolDef,  std::size(kPolDef)  }, // DEFINITIONS
+		{  8, kPolLen,  std::size(kPolLen)  }, // LENGTH_OF_ENGAGEMENT
+		{ 14, kPolLoc,  std::size(kPolLoc)  }, // LOCATION_OF_ENGAGEMENT
+		{ 22, kPolExt,  std::size(kPolExt)  }, // CONTRACT_EXTENSIONS
+		{ 26, kPolPay,  std::size(kPolPay)  }, // TERMS_OF_PAYMENT
+		{ 28, kPolEng,  std::size(kPolEng)  }, // TERMS_OF_ENGAGEMENT
+		{ 32, kPolTerm, std::size(kPolTerm) }, // ENGAGEMENT_TERMINATION
+		{ 37, kPolEqu,  std::size(kPolEqu)  }, // EQUIPMENT_AND_INVENTORY
+		{ 40, kPolMed,  std::size(kPolMed)  }, // POLICY_MEDICAL
+	};
+
+	// ----- aim history ------------------------------------------------
+	void cmdHistory(const std::vector<std::string>& args)
+	{
+		if (!aimSectionGate()) return;
+		enterAimSubpage(LAPTOP_MODE_AIM_HISTORY);
+
+		EDTFile edt(EDTFile::AIM_TEXT);
+		const std::size_t kN = std::size(kHist);
+
+		if (args.size() < 3)
+		{
+			Console_Println(ST::format(
+				"AIM History — {} sections:", kN));
+			for (std::size_t i = 0; i < kN; ++i)
+			{
+				Console_Println(ST::format("  {} — {}",
+					i + 1,
+					CleanOutControlCodesFromString(edt.at(kHist[i].title))));
+			}
+			Console_Println(ST::format(
+				"Use 'aim history <N>' (1..{}) to read a section.", kN));
+			return;
+		}
+
+		long n;
+		if (!parseInt(args[2], n) ||
+			n < 1 || static_cast<std::size_t>(n) > kN)
+		{
+			Console_Println(ST::format(
+				"usage: aim history [1..{}]; got: {}", kN, args[2]));
+			return;
+		}
+		const auto& sec = kHist[n - 1];
+		Console_Println(ST::format("AIM History — {} ({}/{}):",
+			CleanOutControlCodesFromString(edt.at(sec.title)),
+			n, kN));
+		Console_Println("");
+		for (std::size_t i = 0; i < sec.bodyLen; ++i)
+		{
+			Console_Println(CleanOutControlCodesFromString(
+				edt.at(sec.body[i])));
+			Console_Println("");
+		}
+	}
+
+	// ----- aim policies -----------------------------------------------
+	void cmdPolicies(const std::vector<std::string>& args)
+	{
+		if (!aimSectionGate()) return;
+		enterAimSubpage(LAPTOP_MODE_AIM_POLICIES);
+
+		EDTFile edt(EDTFile::AIM_POLICIES);
+		const std::size_t kN = std::size(kPol);
+
+		if (args.size() < 3)
+		{
+			Console_Println(ST::format(
+				"AIM Policies — {} sections:", kN));
+			for (std::size_t i = 0; i < kN; ++i)
+			{
+				Console_Println(ST::format("  {} — {}",
+					i,
+					CleanOutControlCodesFromString(edt.at(kPol[i].title))));
+			}
+			Console_Println(ST::format(
+				"Use 'aim policies <N>' (0..{}) to read a section.",
+				kN - 1));
+			return;
+		}
+
+		long n;
+		if (!parseInt(args[2], n) ||
+			n < 0 || static_cast<std::size_t>(n) >= kN)
+		{
+			Console_Println(ST::format(
+				"usage: aim policies [0..{}]; got: {}", kN - 1, args[2]));
+			return;
+		}
+		const auto& sec = kPol[n];
+		Console_Println(ST::format("AIM Policies — {} ({}/{}):",
+			CleanOutControlCodesFromString(edt.at(sec.title)),
+			n, kN - 1));
+		Console_Println("");
+		for (std::size_t i = 0; i < sec.bodyLen; ++i)
+		{
+			Console_Println(CleanOutControlCodesFromString(
+				edt.at(sec.body[i])));
+			Console_Println("");
+		}
+	}
+
+	// ----- aim archives -----------------------------------------------
+	// `gAimAlumniNames` (col 0 = short name, 80 char) and `gAimAlumniTexts`
+	// (col 0 = full name, col 1 = description / cause of death) — see
+	// AIMArchives.cc:117-118 and EDT.h:71-80.  51 records are populated;
+	// the EDT's full 102 rows include localization variants we don't
+	// touch.  Indices below are 0-based internally, 1-based when shown.
+	constexpr int kAlumniCount = 51;
+
+	void cmdArchives(const std::vector<std::string>& args)
+	{
+		if (!aimSectionGate()) return;
+		enterAimSubpage(LAPTOP_MODE_AIM_MEMBERS_ARCHIVES);
+
+		EDTFile names(EDTFile::AIM_ALUMNI_NAMES);
+		EDTFile texts(EDTFile::AIM_ALUMNI_TEXTS);
+
+		if (args.size() < 3)
+		{
+			Console_Println(ST::format(
+				"AIM Alumni — {} mercs lost in the line of duty:",
+				kAlumniCount));
+			for (int i = 0; i < kAlumniCount; ++i)
+			{
+				Console_Println(ST::format("  {} — {}",
+					i + 1,
+					CleanOutControlCodesFromString(names.at(i, 0))));
+			}
+			Console_Println("Use 'aim archives <name>' or 'aim archives <N>' "
+				"for a bio (cause of death).");
+			return;
+		}
+
+		const std::string raw = joinFrom(args, 2);
+		int target = -1;
+
+		long n;
+		if (parseInt(raw, n))
+		{
+			if (n < 1 || n > kAlumniCount)
+			{
+				Console_Println(ST::format(
+					"alumni index {} out of range (1..{} valid)",
+					raw, kAlumniCount));
+				return;
+			}
+			target = static_cast<int>(n - 1);
+		}
+		else
+		{
+			int exact = -1;
+			int prefix = -1;
+			std::size_t prefixHits = 0;
+			for (int i = 0; i < kAlumniCount; ++i)
+			{
+				const std::string nm = lower(
+					CleanOutControlCodesFromString(names.at(i, 0)).to_std_string());
+				if (nm.empty()) continue;
+				if (nm == raw) { exact = i; break; }
+				if (nm.rfind(raw, 0) == 0) { prefix = i; ++prefixHits; }
+			}
+			if (exact >= 0) target = exact;
+			else if (prefixHits == 1) target = prefix;
+			else if (prefixHits > 1)
+			{
+				Console_Println(ST::format(
+					"ambiguous alumni name: {} (try 'aim archives' to list)",
+					raw));
+				return;
+			}
+		}
+
+		if (target < 0)
+		{
+			Console_Println(ST::format(
+				"no alumni named: {} (try 'aim archives' to list)", raw));
+			return;
+		}
+
+		const ST::string fullName =
+			CleanOutControlCodesFromString(texts.at(target, 0));
+		const ST::string desc =
+			CleanOutControlCodesFromString(texts.at(target, 1));
+
+		Console_Println(ST::format("#{} — {}", target + 1, fullName));
+		Console_Println("");
+		Console_Println(desc);
+	}
 }
 
 void Cmd_Aim(const std::vector<std::string>& args)
@@ -976,11 +1277,16 @@ void Cmd_Aim(const std::vector<std::string>& args)
 	if (sub == "status")    { cmdStatus(); return; }
 	if (sub == "authorize") { cmdAuthorize(); return; }
 	if (sub == "cancel")    { cmdCancel(); return; }
+	if (sub == "archives")  { cmdArchives(args); return; }
+	if (sub == "history")   { cmdHistory(args); return; }
+	if (sub == "policies")  { cmdPolicies(args); return; }
+	if (sub == "links")     { cmdLinks(args); return; }
 
 	Console_Println(ST::format(
 		"unknown subcommand: aim {} "
 		"(try 'aim', 'aim members', 'aim list', 'aim merc <name>', "
 		"'aim show <name>', 'aim contact', 'aim length', 'aim gear', "
-		"'aim status', 'aim authorize', 'aim cancel')",
+		"'aim status', 'aim authorize', 'aim cancel', "
+		"'aim archives', 'aim history', 'aim policies', 'aim links')",
 		args[1]));
 }

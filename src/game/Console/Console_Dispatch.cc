@@ -62,7 +62,7 @@ namespace
 		{ "exit",       &Cmd_Exit,       "exit <n|s|e|w> — leave the sector through that side"   },
 		{ "end-turn",   &Cmd_EndTurn,    "end-turn"                                               },
 		{ "email",     &Cmd_Email,      "email | email unread | email <id> — inbox (laptop only)" },
-		{ "aim",       &Cmd_Aim,        "aim | aim members | aim list | aim merc <name|aN> | aim show <name|aN> | aim contact | aim length day|week|biweek | aim gear on|off | aim status | aim authorize | aim cancel" },
+		{ "aim",       &Cmd_Aim,        "aim | aim members | aim list | aim merc <name|aN> | aim show <name|aN> | aim contact | aim length day|week|biweek | aim gear on|off | aim status | aim authorize | aim cancel | aim archives [name|N] | aim history [N] | aim policies [N] | aim links [bobby|funeral|insurance]" },
 		{ "imp",       &Cmd_Imp,        "imp [goto|name|nickname|gender|question|answer|confirm|prev|next|traits|trait|stats|stat|portrait|voice|done|hire]" },
 		{ "team",      &Cmd_Team,       "team | team list [filter] [sort] | team merc <name|tN> | team select <name|tN> [+|-] | team sleep <name|tN> <on|off>" },
 		{ "map",       &Cmd_Map,        "map | map sector <id> | map list <towns|mines|sams|militia|enemies> | map town <name> | map mine <town> | map level <0..3> | map move <sector> [from <name>] [keep-path] | map cancel [<name>]" },
