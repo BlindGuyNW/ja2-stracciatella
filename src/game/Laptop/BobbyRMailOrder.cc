@@ -1910,6 +1910,158 @@ void NewWayOfLoadingBobbyRMailOrdersToSaveGameFile(HWFILE const hFile)
 }
 
 
+// ---------------------------------------------------------------------
+// Console-verb bridges. Same engine state mutations the GUI callbacks
+// drive, but callable from any laptop page (e.g. the front plaques).
+// See docs/bobbyr.md.
+// ---------------------------------------------------------------------
+
+namespace
+{
+	UINT32 SumCartCost()
+	{
+		UINT32 total = 0;
+		FOR_EACH(BobbyRayPurchaseStruct const, i, BobbyRayPurchases)
+		{
+			BobbyRayPurchaseStruct const& p = *i;
+			if (p.ubNumberPurchased == 0) continue;
+			total += CalcBobbyRayCost(p.usItemIndex, p.usBobbyItemIndex, p.fUsed) *
+				p.ubNumberPurchased;
+		}
+		return total;
+	}
+
+	bool AnyCartLineActive()
+	{
+		FOR_EACH(BobbyRayPurchaseStruct const, i, BobbyRayPurchases)
+		{
+			if (i->ubNumberPurchased != 0) return true;
+		}
+		return false;
+	}
+}
+
+BobbyR_OrderState BobbyR_GetOrderState()
+{
+	BobbyR_OrderState s{};
+	s.selectedCity    = gbSelectedCity;
+	s.selectedSpeed   = gubSelectedLight;
+	s.subtotal        = SumCartCost();
+	s.packageWeight   = CalcPackageTotalWeight();
+	s.shippingCost    = (gbSelectedCity == -1 || gubSelectedLight >= 3)
+		? 0u
+		: CalcCostFromWeightOfPackage(gubSelectedLight);
+	s.grandTotal      = s.subtotal + s.shippingCost;
+	s.anyInCart       = AnyCartLineActive();
+	s.confirmModalUp  = gfDrawConfirmOrderGrpahic == TRUE;
+	return s;
+}
+
+bool BobbyR_SetSelectedCity(INT8 cityId)
+{
+	const auto& dests = GCM->getShippingDestinations();
+	if (cityId < 0 || static_cast<size_t>(cityId) >= dests.size()) return false;
+	gbSelectedCity = cityId;
+	// Keep the dropdown's scroll position consistent with the selection.
+	if (gubCityAtTopOfList > cityId) gubCityAtTopOfList = cityId;
+	gfReDrawBobbyOrder = TRUE;
+	return true;
+}
+
+bool BobbyR_SetSelectedSpeed(UINT8 speed)
+{
+	if (speed > 2) return false;
+	gubSelectedLight = speed;
+	gfReDrawBobbyOrder = TRUE;
+	return true;
+}
+
+void BobbyR_ClearCart()
+{
+	std::fill_n(BobbyRayPurchases, MAX_PURCHASE_AMOUNT, BobbyRayPurchaseStruct{});
+	gubSelectedLight = 0;
+	gbSelectedCity = -1;
+	gubCityAtTopOfList = 0;
+	gubDropDownAction = BR_DROP_DOWN_DESTROY;
+	gfReDrawBobbyOrder = TRUE;
+}
+
+INT32 BobbyR_PlaceOrder(ST::string& failReason)
+{
+	if (!AnyCartLineActive())
+	{
+		failReason = "cart is empty";
+		return -1;
+	}
+	if (gbSelectedCity == -1)
+	{
+		failReason = "no shipping destination set (try 'bobbyr ship <city>')";
+		return -1;
+	}
+	if (gubSelectedLight > 2)
+	{
+		failReason = "no shipping speed set (try 'bobbyr speed <standard|overnight|express>')";
+		return -1;
+	}
+
+	const UINT32 subtotal     = SumCartCost();
+	const UINT32 weight       = CalcPackageTotalWeight();
+	const UINT32 shipping     = CalcCostFromWeightOfPackage(gubSelectedLight);
+	const INT32  grandTotal   = static_cast<INT32>(subtotal + shipping);
+
+	if (LaptopSaveInfo.iCurrentBalance < grandTotal)
+	{
+		failReason = ST::format(
+			"insufficient funds (need {}, have {})",
+			SPrintMoney(grandTotal),
+			SPrintMoney(LaptopSaveInfo.iCurrentBalance));
+		return -1;
+	}
+
+	auto dest = GCM->getShippingDestination(gbSelectedCity);
+	if (!dest->canDeliver)
+	{
+		failReason = ST::format("Bobby Ray's cannot deliver to {}", dest->name);
+		return -1;
+	}
+
+	// Mirror PurchaseBobbyOrder's sequence:
+	gfCanAcceptOrder = FALSE;
+	AddNewBobbyRShipment(BobbyRayPurchases, gbSelectedCity, gubSelectedLight,
+		TRUE, weight);
+	AddTransactionToPlayersBook(BOBBYR_PURCHASE, 0, GetWorldTotalMin(),
+		-grandTotal);
+	gfDrawConfirmOrderGrpahic = TRUE;
+	gubDropDownAction = BR_DROP_DOWN_DESTROY;
+	gSelectedConfirmOrderRegion.Enable();
+	gfRemoveItemsFromStock = TRUE;
+	gbSelectedCity = -1;
+
+	// AddNewBobbyRShipment fills the lowest free slot in
+	// gpNewBobbyrShipments — locate it by walking from the back for the
+	// most recently added active entry.
+	for (INT32 i = static_cast<INT32>(gpNewBobbyrShipments.size()) - 1;
+		i >= 0; --i)
+	{
+		if (gpNewBobbyrShipments[i].fActive) return i;
+	}
+	return -1;
+}
+
+void BobbyR_DismissConfirmOverlay()
+{
+	if (!gfDrawConfirmOrderGrpahic) return;
+	// Mirror SelectConfirmOrderRegionCallBackSecondary: remove the
+	// purchased items from the store stock, clear cart leftovers, drop
+	// the overlay, stay on the order page.
+	RemovePurchasedItemsFromBobbyRayInventory();
+	std::fill_n(BobbyRayPurchases, MAX_PURCHASE_AMOUNT, BobbyRayPurchaseStruct{});
+	gubSelectedLight = 0;
+	gfDestroyConfirmGrphiArea = TRUE;
+	gfDrawConfirmOrderGrpahic = FALSE;
+}
+
+
 #ifdef WITH_UNITTESTS
 #include "gtest/gtest.h"
 
