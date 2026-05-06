@@ -83,12 +83,23 @@ namespace
 		{ "debug",     &Cmd_Debug,      "debug [summary|structures|items|world] — world-state diagnostics" },
 	};
 
+	struct Alias { const char* from; const char* to; };
+	const Alias kAliases[] =
+	{
+		{ "n", "nearby" },
+	};
+
 	void cmdHelp(const ArgList&)
 	{
 		Console_Println("Commands:");
 		for (const auto& e : kTable)
 		{
 			Console_Println(ST::format("  {} — {}", e.verb, e.help));
+		}
+		Console_Println("Aliases:");
+		for (const auto& a : kAliases)
+		{
+			Console_Println(ST::format("  {} → {}", a.from, a.to));
 		}
 		Console_Println("Targets are: a name (e.g. ivan), a direction+steps (e.g. ne 5),");
 		Console_Println("or a col,row coordinate (e.g. 80,90).");
@@ -118,6 +129,13 @@ namespace
 		// confirm what the parser saw, and so the user can scroll back
 		// through a clean transcript.
 		Console_Println(ST::format("> {}", line));
+
+		// Alias resolution before lookup so the canonical verb is what
+		// runs and what subsequent code (help text, error messages) sees.
+		for (const auto& a : kAliases)
+		{
+			if (toks[0] == a.from) { toks[0] = a.to; break; }
+		}
 
 		for (const auto& e : kTable)
 		{
