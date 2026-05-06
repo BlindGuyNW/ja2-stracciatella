@@ -40,7 +40,7 @@ namespace
 		{ "help",      &cmdHelp,        "list commands"                                          },
 		{ "sector",    &Cmd_Sector,     "sector name, time, turn phase"                          },
 		{ "merc",      &Cmd_Merc,       "merc [name] — life, breath, AP, stance, held weapon"    },
-		{ "nearby",    &Cmd_Nearby,     "nearby [enemies|mercs|civs|items|doors|containers|exits|hazards|mines|unexplored|all] [N]" },
+		{ "nearby",    &Cmd_Nearby,     "nearby [category] [N] — bare = combat-actionable; categories: enemies|mercs|civs|items|doors|containers|exits|hazards|mines|unexplored|all" },
 		{ "look",      &Cmd_Look,       "look [<dir> [N]] — scan a direction (or all 4 cardinals)" },
 		{ "tile",      &Cmd_Tile,       "tile <target> — terrain and occupant"                   },
 		{ "cth",       &Cmd_Cth,        "cth <target> — chance-to-hit at aim 0..4"               },

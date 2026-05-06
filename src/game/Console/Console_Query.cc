@@ -869,7 +869,7 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 		return;
 	}
 
-	std::string filter = "all";
+	std::string filter;
 	INT16 maxDist = 0;
 	for (std::size_t i = 1; i < args.size(); ++i)
 	{
@@ -878,20 +878,26 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 		else                      filter  = args[i];
 	}
 
-	const bool wantEnemies    = (filter == "all" || filter == "enemies");
-	const bool wantMercs      = (filter == "all" || filter == "mercs");
-	const bool wantItems      = (filter == "all" || filter == "items");
-	const bool wantDoors      = (filter == "all" || filter == "doors");
-	const bool wantContainers = (filter == "all" || filter == "containers");
-	const bool wantCivilians  = (filter == "all" || filter == "civilians" || filter == "civs");
-	const bool wantExits      = (filter == "all" || filter == "exits");
-	// Hazards and mines are in `all` — they're as immediately actionable
-	// as a hostile and a sighted player would clock them at first glance.
-	const bool wantHazards    = (filter == "all" || filter == "hazards");
-	const bool wantMines      = (filter == "all" || filter == "mines");
-	// Unexplored is opt-in only — it's a different question ("where to
-	// go?") from the rest of `nearby` ("what's around me?") and pulling
-	// it into `all` would bury those answers in compass-rose chatter.
+	// Two tiers. Bare `nearby` (no filter token) shows only what a sighted
+	// player would clock as immediately actionable: people on the map plus
+	// hazards and mines. Spatial inventory — doors, containers, exits, item
+	// piles — is one keystroke away via an explicit category, but pulling
+	// every door on a town map into the default buries the combat picture.
+	// `nearby all` keeps the full kitchen-sink behavior for muscle memory.
+	// Unexplored stays opt-in for the same reason it always was: it answers
+	// a different question ("where to go?") and would dominate the output.
+	const bool isDefault = filter.empty();
+	const bool isAll     = (filter == "all");
+
+	const bool wantEnemies    = isDefault || isAll || filter == "enemies";
+	const bool wantMercs      = isDefault || isAll || filter == "mercs";
+	const bool wantCivilians  = isDefault || isAll || filter == "civilians" || filter == "civs";
+	const bool wantHazards    = isDefault || isAll || filter == "hazards";
+	const bool wantMines      = isDefault || isAll || filter == "mines";
+	const bool wantItems      = isAll || filter == "items";
+	const bool wantDoors      = isAll || filter == "doors";
+	const bool wantContainers = isAll || filter == "containers";
+	const bool wantExits      = isAll || filter == "exits";
 	const bool wantUnexplored = (filter == "unexplored" || filter == "unknown");
 
 	if (!wantEnemies && !wantMercs && !wantItems && !wantDoors && !wantContainers &&
