@@ -8,6 +8,7 @@
 #include "ArmourModel.h"
 #include "CalibreModel.h"
 #include "ContentManager.h"
+#include "DisplayCover.h"
 #include "Exit_Grids.h"
 #include "GameInstance.h"
 #include "Game_Clock.h"
@@ -25,6 +26,7 @@
 #include "OppList.h"
 #include "Overhead.h"
 #include "Overhead_Types.h"
+#include "Render_Fun.h"
 #include "Soldier_Control.h"
 #include "Soldier_Macros.h"
 #include "StrategicMap.h"
@@ -220,30 +222,49 @@ namespace
 		return ST::format("({},{})", gridno % WORLD_COLS, gridno / WORLD_COLS);
 	}
 
+	// "[same room]" or "[room N]" suffix for nearby entries whose tile is
+	// in an editor-marked enclosed area. Outdoor tiles (NO_ROOM) get no
+	// annotation — sighted players see continuous outdoor space and tagging
+	// it would overclaim. Same-room indoor tiles read "[same room]" so the
+	// user knows no walls separate them from the entry. Different rooms
+	// get the numeric ID; rooms have no human names in the data, but the
+	// IDs are stable across saves so "room 3" is a usable landmark within
+	// a sector.
+	ST::string roomSuffix(const SOLDIERTYPE& observer, INT16 entryGridno)
+	{
+		const UINT8 entryRoom = GetRoom(entryGridno);
+		if (entryRoom == NO_ROOM) return ST::string();
+		const UINT8 obsRoom = GetRoom(observer.sGridNo);
+		if (entryRoom == obsRoom) return ST::string(" [same room]");
+		return ST::format(" [room {}]", entryRoom);
+	}
+
 	ST::string formatHostileLine(const ListedSoldier& ls, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
 		const SOLDIERTYPE& t = *ls.soldier;
 		const UINT8  dir    = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, t.sGridNo));
 		const UINT16 weapon = t.inv[HANDPOS].usItem;
+		const ST::string room = roomSuffix(observer, t.sGridNo);
 		return weapon != 0
-			? ST::format("  e{} {} {}, {} tiles {}, {}, life {}, {}",
+			? ST::format("  e{} {} {}, {} tiles {}, {}, life {}, {}{}",
 			             tagN, t.name, coordLabel(t.sGridNo),
 			             ls.distance, directionWord(dir),
-			             stanceWord(t), t.bLife, itemName(weapon))
-			: ST::format("  e{} {} {}, {} tiles {}, {}, life {}",
+			             stanceWord(t), t.bLife, itemName(weapon), room)
+			: ST::format("  e{} {} {}, {} tiles {}, {}, life {}{}",
 			             tagN, t.name, coordLabel(t.sGridNo),
 			             ls.distance, directionWord(dir),
-			             stanceWord(t), t.bLife);
+			             stanceWord(t), t.bLife, room);
 	}
 
 	ST::string formatFriendlyLine(const ListedSoldier& ls, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
 		const SOLDIERTYPE& t = *ls.soldier;
 		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, t.sGridNo));
-		return ST::format("  m{} {} {}, {} tiles {}, life {}, AP {}",
+		return ST::format("  m{} {} {}, {} tiles {}, life {}, AP {}{}",
 		                  tagN, t.name, coordLabel(t.sGridNo),
 		                  ls.distance, directionWord(dir),
-		                  t.bLife, t.bActionPoints);
+		                  t.bLife, t.bActionPoints,
+		                  roomSuffix(observer, t.sGridNo));
 	}
 
 	struct ItemPile
@@ -324,8 +345,9 @@ namespace
 				: itemName(kinds[i]);
 		}
 
-		return ST::format("  i{} {} tiles {}: {}",
-		                  tagN, p.distance, directionWord(dir), list);
+		return ST::format("  i{} {} tiles {}: {}{}",
+		                  tagN, p.distance, directionWord(dir), list,
+		                  roomSuffix(observer, p.gridno));
 	}
 
 	struct ListedDoor
@@ -428,8 +450,9 @@ namespace
 	ST::string formatContainerLine(const ListedContainer& c, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
 		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, c.gridno));
-		return ST::format("  k{} {} tiles {}: container",
-		                  tagN, c.distance, directionWord(dir));
+		return ST::format("  k{} {} tiles {}: container{}",
+		                  tagN, c.distance, directionWord(dir),
+		                  roomSuffix(observer, c.gridno));
 	}
 
 	ST::string formatDoorLine(const ListedDoor& d, std::size_t tagN, const SOLDIERTYPE& observer)
@@ -449,8 +472,9 @@ namespace
 			default:                      lock = "";                break; // UNKNOWN: don't volunteer
 		}
 
-		return ST::format("  d{} {} tiles {}: {}{}",
-		                  tagN, d.distance, directionWord(dir), state, lock);
+		return ST::format("  d{} {} tiles {}: {}{}{}",
+		                  tagN, d.distance, directionWord(dir), state, lock,
+		                  roomSuffix(observer, d.gridno));
 	}
 
 	// Civilians use the same fog rule as enemies — the engine's
@@ -483,10 +507,11 @@ namespace
 		// quest NPCs have proper names. Either way, lead with the name and
 		// leave gameplay vitals (life/AP) off — civs aren't typically a
 		// resource the player manages.
-		return ST::format("  c{} {} {}, {} tiles {}, {}",
+		return ST::format("  c{} {} {}, {} tiles {}, {}{}",
 		                  tagN, t.name, coordLabel(t.sGridNo),
 		                  ls.distance, directionWord(dir),
-		                  stanceWord(t));
+		                  stanceWord(t),
+		                  roomSuffix(observer, t.sGridNo));
 	}
 
 	struct ListedExit
@@ -660,6 +685,163 @@ namespace
 		return ST::format("  u{} {} tiles {}: nearest at ({},{}), {} tiles unseen this way",
 		                  tagN, f.closestDist, directionWord(dir), col, row, f.count);
 	}
+
+	// Hazard label priority: most-dangerous wins when a tile carries
+	// multiple flags (rare but possible — overlapping clouds). Mustard
+	// gas degrades over multiple turns and resists masks; tear gas is
+	// less lethal but still incapacitating. Smoke is just LOS.
+	struct HazardType { UINT8 mask; const char* name; };
+	const HazardType kHazardTypes[] = {
+		{ MAPELEMENT_EXT_MUSTARDGAS,  "mustard gas"  },
+		{ MAPELEMENT_EXT_TEARGAS,     "tear gas"     },
+		{ MAPELEMENT_EXT_CREATUREGAS, "creature gas" },
+		{ MAPELEMENT_EXT_SMOKE,       "smoke"        },
+	};
+
+	const char* hazardLabel(UINT8 ext)
+	{
+		for (const auto& h : kHazardTypes)
+		{
+			if (ext & h.mask) return h.name;
+		}
+		return nullptr;
+	}
+
+	struct ListedHazard
+	{
+		INT16       distance;       // to closest tile in cluster
+		INT16       closestGridno;
+		INT16       tileCount;
+		const char* label;
+	};
+
+	// Group adjacent hazard tiles into one cluster per cloud — sighted
+	// players see one drifting blob per smoke pop, not N separate sprites,
+	// so reporting per-tile would inflate noise badly. Hazards aren't
+	// gated on MAPELEMENT_REVEALED: smoke and gas are visually obvious
+	// rendered effects regardless of whether the team has explored the
+	// underlying ground tile (a cloud rising over fog still tells you
+	// "something's burning over there").
+	void enumerateHazards(const SOLDIERTYPE& observer, std::vector<ListedHazard>& out)
+	{
+		std::vector<bool> seen(WORLD_MAX, false);
+		for (INT16 g = 0; g < WORLD_MAX; ++g)
+		{
+			if (seen[g]) continue;
+			if (!(gpWorldLevelData[g].ubExtFlags[0] & ANY_SMOKE_EFFECT)) continue;
+
+			UINT8 clusterTypes = 0;
+			INT16 closestG = g;
+			INT16 closestDist = PythSpacesAway(observer.sGridNo, g);
+			int   count = 0;
+
+			std::vector<INT16> stack;
+			stack.push_back(g);
+			while (!stack.empty())
+			{
+				const INT16 cur = stack.back();
+				stack.pop_back();
+				if (cur < 0 || cur >= WORLD_MAX) continue;
+				if (seen[cur]) continue;
+				const UINT8 e = gpWorldLevelData[cur].ubExtFlags[0] & ANY_SMOKE_EFFECT;
+				if (!e) continue;
+
+				seen[cur] = true;
+				++count;
+				clusterTypes |= e;
+				const INT16 d = PythSpacesAway(observer.sGridNo, cur);
+				if (d < closestDist) { closestDist = d; closestG = cur; }
+
+				// 8-connected neighbours, with a column-delta guard so we
+				// don't wrap from col 0 on row R to col 159 on row R-1.
+				const INT16 cx = cur % WORLD_COLS;
+				const INT16 cy = cur / WORLD_COLS;
+				for (UINT8 dir = 0; dir < NUM_WORLD_DIRECTIONS; ++dir)
+				{
+					const INT16 nbr = cur + DirIncrementer[dir];
+					if (nbr < 0 || nbr >= WORLD_MAX) continue;
+					const INT16 nx = nbr % WORLD_COLS;
+					const INT16 ny = nbr / WORLD_COLS;
+					if (std::abs(nx - cx) > 1 || std::abs(ny - cy) > 1) continue;
+					stack.push_back(nbr);
+				}
+			}
+
+			ListedHazard h{};
+			h.distance      = closestDist;
+			h.closestGridno = closestG;
+			h.tileCount     = static_cast<INT16>(count);
+			h.label         = hazardLabel(clusterTypes);
+			if (h.label) out.push_back(h);
+		}
+
+		std::sort(out.begin(), out.end(),
+			[](const ListedHazard& a, const ListedHazard& b)
+			{
+				if (a.distance != b.distance) return a.distance < b.distance;
+				return a.closestGridno < b.closestGridno;
+			});
+	}
+
+	ST::string formatHazardLine(const ListedHazard& h, std::size_t tagN, const SOLDIERTYPE& observer)
+	{
+		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, h.closestGridno));
+		if (h.tileCount <= 1)
+		{
+			return ST::format("  z{} {} tiles {}: {}",
+			                  tagN, h.distance, directionWord(dir), h.label);
+		}
+		return ST::format("  z{} {} tiles {}: {} ({} tiles)",
+		                  tagN, h.distance, directionWord(dir),
+		                  h.label, h.tileCount);
+	}
+
+	struct ListedMine
+	{
+		INT16 distance;
+		INT16 gridno;
+		bool  player;  // player-laid; false = enemy mine spotted by team
+	};
+
+	// MAPELEMENT_PLAYER_MINE_PRESENT is set on lay (Handle_Items.cc:957);
+	// MAPELEMENT_ENEMY_MINE_PRESENT is set when a team merc detects or
+	// triggers one (Overhead.cc:1237) — it IS the "player knows about it"
+	// bit, so no further visibility gate is needed. Both are persistent
+	// in save data, matching the sighted-player experience: once you've
+	// seen a mine you never forget where it is.
+	void enumerateMines(const SOLDIERTYPE& observer, std::vector<ListedMine>& out)
+	{
+		for (INT16 g = 0; g < WORLD_MAX; ++g)
+		{
+			const UINT16 flags = gpWorldLevelData[g].uiFlags;
+			const bool player = (flags & MAPELEMENT_PLAYER_MINE_PRESENT) != 0;
+			const bool enemy  = (flags & MAPELEMENT_ENEMY_MINE_PRESENT)  != 0;
+			if (!player && !enemy) continue;
+			ListedMine m{};
+			m.gridno   = g;
+			m.distance = PythSpacesAway(observer.sGridNo, g);
+			// Player flag wins on the rare both-set case: a friendly mine
+			// you laid on a tile that already had a known enemy mine is
+			// still safe to walk through if you know the trigger pattern.
+			m.player   = player;
+			out.push_back(m);
+		}
+		std::sort(out.begin(), out.end(),
+			[](const ListedMine& a, const ListedMine& b)
+			{
+				if (a.distance != b.distance) return a.distance < b.distance;
+				return a.gridno < b.gridno;
+			});
+	}
+
+	ST::string formatMineLine(const ListedMine& m, std::size_t tagN, const SOLDIERTYPE& observer)
+	{
+		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, m.gridno));
+		return ST::format("  b{} {} tiles {}: {} mine{}",
+		                  tagN, m.distance, directionWord(dir),
+		                  m.player ? "friendly" : "enemy",
+		                  roomSuffix(observer, m.gridno));
+	}
 }
 
 void Cmd_Nearby(const std::vector<std::string>& args)
@@ -687,16 +869,20 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 	const bool wantContainers = (filter == "all" || filter == "containers");
 	const bool wantCivilians  = (filter == "all" || filter == "civilians" || filter == "civs");
 	const bool wantExits      = (filter == "all" || filter == "exits");
+	// Hazards and mines are in `all` — they're as immediately actionable
+	// as a hostile and a sighted player would clock them at first glance.
+	const bool wantHazards    = (filter == "all" || filter == "hazards");
+	const bool wantMines      = (filter == "all" || filter == "mines");
 	// Unexplored is opt-in only — it's a different question ("where to
 	// go?") from the rest of `nearby` ("what's around me?") and pulling
 	// it into `all` would bury those answers in compass-rose chatter.
 	const bool wantUnexplored = (filter == "unexplored" || filter == "unknown");
 
 	if (!wantEnemies && !wantMercs && !wantItems && !wantDoors && !wantContainers &&
-	    !wantCivilians && !wantExits && !wantUnexplored)
+	    !wantCivilians && !wantExits && !wantHazards && !wantMines && !wantUnexplored)
 	{
 		Console_Println(ST::format(
-			"unknown filter '{}' (try: enemies, mercs, civs, items, doors, containers, exits, unexplored, all)",
+			"unknown filter '{}' (try: enemies, mercs, civs, items, doors, containers, exits, hazards, mines, unexplored, all)",
 			filter));
 		return;
 	}
@@ -799,6 +985,34 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 		{
 			if (maxDist > 0 && exits[i].distance > maxDist) continue;
 			Console_Println(formatExitLine(exits[i], i + 1, *observer));
+			++shown;
+		}
+		if (shown == 0) Console_Println("  (none)");
+	}
+	if (wantHazards)
+	{
+		std::vector<ListedHazard> hazards;
+		enumerateHazards(*observer, hazards);
+		Console_Println(ST::format("Hazards ({}):", hazards.size()));
+		std::size_t shown = 0;
+		for (std::size_t i = 0; i < hazards.size(); ++i)
+		{
+			if (maxDist > 0 && hazards[i].distance > maxDist) continue;
+			Console_Println(formatHazardLine(hazards[i], i + 1, *observer));
+			++shown;
+		}
+		if (shown == 0) Console_Println("  (none)");
+	}
+	if (wantMines)
+	{
+		std::vector<ListedMine> mines;
+		enumerateMines(*observer, mines);
+		Console_Println(ST::format("Mines ({}):", mines.size()));
+		std::size_t shown = 0;
+		for (std::size_t i = 0; i < mines.size(); ++i)
+		{
+			if (maxDist > 0 && mines[i].distance > maxDist) continue;
+			Console_Println(formatMineLine(mines[i], i + 1, *observer));
 			++shown;
 		}
 		if (shown == 0) Console_Println("  (none)");
@@ -928,6 +1142,7 @@ namespace
 		TerrainTypeDefines prevTerrain = GetTerrainType(origin);
 		bool prevExplored = (gpWorldLevelData[origin].uiFlags & MAPELEMENT_REVEALED) != 0;
 		bool prevInTrees  = FindStructure(origin, STRUCTURE_TREE) != nullptr;
+		UINT8 prevHazard  = gpWorldLevelData[origin].ubExtFlags[0] & ANY_SMOKE_EFFECT;
 
 		INT16 g = origin;
 		for (INT16 s = 1; s <= maxSteps; ++s)
@@ -1006,6 +1221,24 @@ namespace
 			{
 				out.push_back({s, ST::string(inTrees ? "trees begin" : "trees end")});
 				prevInTrees = inTrees;
+			}
+
+			// Hazard cloud transitions: announce entering a smoke/gas
+			// cloud and exiting one. We pick one label per transition
+			// even if multiple hazard flags are present (dominant by the
+			// same priority `nearby hazards` uses).
+			const UINT8 hazard = gpWorldLevelData[g].ubExtFlags[0] & ANY_SMOKE_EFFECT;
+			if (hazard != prevHazard)
+			{
+				if (hazard)
+				{
+					out.push_back({s, ST::format("{} begins", hazardLabel(hazard))});
+				}
+				else
+				{
+					out.push_back({s, ST::format("{} ends", hazardLabel(prevHazard))});
+				}
+				prevHazard = hazard;
 			}
 
 			// Explored/unexplored transition. The first crossing into fog
@@ -1154,6 +1387,35 @@ void Cmd_Tile(const std::vector<std::string>& args)
 
 	Console_Println(ST::format("{}: {}.", label, terrainWord(terrain)));
 
+	// Room ID: anonymous numeric, but a stable per-sector "are we in the
+	// same enclosed space?" anchor. NO_ROOM is the engine's outdoor /
+	// unbounded sentinel — report it explicitly so the user can tell
+	// "outside" from "this tile happens to have no room data."
+	const UINT8 room = GetRoom(tgt.gridno);
+	if (room == NO_ROOM)
+	{
+		Console_Println("  Outdoors.");
+	}
+	else
+	{
+		Console_Println(ST::format("  In room {}.", room));
+	}
+
+	// Hazards: surfaced even on unrevealed tiles (clouds rise visibly
+	// over fog) so they're announced before the visibility short-circuit.
+	const UINT8 hazard = gpWorldLevelData[tgt.gridno].ubExtFlags[0] & ANY_SMOKE_EFFECT;
+	if (hazard)
+	{
+		Console_Println(ST::format("  Hazard: {}.", hazardLabel(hazard)));
+	}
+
+	// Mines tracked by MAPELEMENT_*_MINE_PRESENT are already gated to
+	// "player knows about it" (see enumerateMines). Surface them on `tile`
+	// even before the revealed check for the same reason.
+	const UINT16 flags = gpWorldLevelData[tgt.gridno].uiFlags;
+	if (flags & MAPELEMENT_PLAYER_MINE_PRESENT) Console_Println("  Friendly mine here.");
+	if (flags & MAPELEMENT_ENEMY_MINE_PRESENT)  Console_Println("  Enemy mine here.");
+
 	if (!ConsoleVis::IsKnownTile(tgt.gridno, level))
 	{
 		Console_Println("  Unrevealed — no further detail.");
@@ -1219,6 +1481,53 @@ void Cmd_Cth(const std::vector<std::string>& args)
 
 	const ST::string label = tgt.soldier ? tgt.soldier->name : ST::string("target tile");
 	Console_Println(ST::format("CTH on {}:  {}", label, cells));
+}
+
+namespace
+{
+	// Bucket boundaries match the engine's hold-DELETE overlay
+	// (DisplayCover.cc:142-147): five colour bands at 20/40/60/80. We
+	// emit the same bands as English labels so the SR user gets the
+	// same granularity a sighted player perceives — no precise percent,
+	// because the cursor overlay never shows one either.
+	const char* coverBucket(INT8 cover)
+	{
+		if (cover <= 20) return "exposed";
+		if (cover <= 40) return "weak cover";
+		if (cover <= 60) return "partial cover";
+		if (cover <= 80) return "good cover";
+		return "safe";
+	}
+}
+
+void Cmd_Cover(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const sel = GetSelectedMan();
+	if (!sel) { Console_Println("No merc selected."); return; }
+
+	INT16      gridno = sel->sGridNo;
+	ST::string label  = ST::string("here");
+	if (args.size() >= 2)
+	{
+		Target tgt;
+		ST::string err;
+		if (parseTarget(args, 1, sel, tgt, err) == 0) { Console_Println(err); return; }
+		gridno = tgt.gridno;
+		const INT16 dist = PythSpacesAway(sel->sGridNo, gridno);
+		const UINT8 dir  = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(sel->sGridNo, gridno));
+		label = dist == 0
+			? ST::string("here")
+			: ST::format("{} tiles {}", dist, directionWord(dir));
+	}
+
+	// Always evaluate at the merc's current animation stance — the same
+	// "what would my cover be standing here as I am now?" question the
+	// hold-DELETE overlay answers when you cursor onto a tile.
+	const INT8 stance = GetStance(*sel);
+	const INT8 cover  = CalcCoverForGridNoBasedOnTeamKnownEnemies(sel, gridno, stance);
+
+	Console_Println(ST::format("Cover at {} ({}): {}.",
+	                           label, stanceWord(*sel), coverBucket(cover)));
 }
 
 namespace

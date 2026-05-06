@@ -187,7 +187,6 @@ void RemoveCoverOfSelectedGridNo()
 }
 
 
-static INT8 CalcCoverForGridNoBasedOnTeamKnownEnemies(const SOLDIERTYPE* pSoldier, INT16 sTargetGridNo, INT8 bStance);
 static SOLDIERTYPE* GetCurrentMercForDisplayCover(void);
 
 
@@ -267,7 +266,7 @@ static void CalculateCoverInRadiusAroundGridno(INT16 const sTargetGridNo, int se
 }
 
 
-static INT8 CalcCoverForGridNoBasedOnTeamKnownEnemies(SOLDIERTYPE const* const pSoldier, INT16 const sTargetGridNo, INT8 const bStance)
+INT8 CalcCoverForGridNoBasedOnTeamKnownEnemies(SOLDIERTYPE const* const pSoldier, INT16 const sTargetGridNo, INT8 const bStance)
 {
 	// loop through all the enemies and determine the cover
 	INT32 iTotalCoverPoints = 0;
