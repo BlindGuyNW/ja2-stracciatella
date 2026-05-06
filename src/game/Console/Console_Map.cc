@@ -21,6 +21,7 @@
 #include "Soldier_Control.h"
 #include "Soldier_Profile.h"
 #include "Soldier_Profile_Type.h"
+#include "Squads.h"
 #include "ScreenIDs.h"
 #include "Strategic_Mines.h"
 #include "Strategic_Movement.h"
@@ -254,11 +255,9 @@ namespace
 
 	// ----- compact-row formatting -------------------------------------
 	// One readable row per merc. Mirrors the GUI columns but flattens
-	// them: name, location, assignment, contract, life. Selected mercs
-	// (gCharactersList[i].selected) get a leading '*'.
+	// them: name, location, assignment, contract, life.
 	ST::string mercRow(INT8 slot, const SOLDIERTYPE& s)
 	{
-		const char* sel = gCharactersList[slot].selected ? "*" : " ";
 		const ST::string name = s.name;
 		const ST::string loc  = GetMapscreenMercLocationString(s);
 		const ST::string asg  = GetMapscreenMercAssignmentString(s);
@@ -281,8 +280,8 @@ namespace
 		{
 			contract = ST::string("--");
 		}
-		return ST::format("  {}t{} {} — {}, {}, {}, life {}/{}",
-			sel, static_cast<int>(slot) + 1,
+		return ST::format("  t{} {} — {}, {}, {}, life {}/{}",
+			static_cast<int>(slot) + 1,
 			name, loc, asg, contract, s.bLife, s.bLifeMax);
 	}
 
@@ -477,11 +476,6 @@ namespace
 			Console_Println(mercRow(slot, *gCharactersList[slot].merc));
 		}
 
-		bool anySelected = false;
-		for (INT8 slot : slots)
-			if (gCharactersList[slot].selected) { anySelected = true; break; }
-		if (anySelected)
-			Console_Println("('*' marks mercs in the multi-select.)");
 	}
 
 	// ----- team merc --------------------------------------------------
@@ -541,9 +535,8 @@ namespace
 		else
 			header = p.zName.empty() ? s.name : p.zName;
 		Console_Println(ST::format(
-			"{}, level {}, {} ({}).",
-			header, s.bExpLevel, mercKindWord(s),
-			gCharactersList[slot].selected ? "selected" : "not selected"));
+			"{}, level {}, {}.",
+			header, s.bExpLevel, mercKindWord(s)));
 
 		// Status line.
 		const ST::string loc  = GetMapscreenMercLocationString(s);
@@ -1092,96 +1085,6 @@ namespace
 	}
 
 	// ============================================================
-	//   Multi-select read-back
-	// ============================================================
-
-	// Pretty-print the current multi-select. Used after `team select`
-	// changes to confirm what the verb actually did, and pulled in by
-	// `map move` to show whose path got plotted.
-	void printSelection()
-	{
-		std::vector<INT8> sel;
-		for (INT8 i = 0; i < MAX_CHARACTER_COUNT; ++i)
-		{
-			if (gCharactersList[i].merc && gCharactersList[i].selected)
-				sel.push_back(i);
-		}
-		if (sel.empty())
-		{
-			Console_Println("Selection: (empty).");
-			return;
-		}
-		ST::string names;
-		for (INT8 slot : sel)
-		{
-			if (!names.empty()) names += ", ";
-			names += gCharactersList[slot].merc->name;
-		}
-		Console_Println(ST::format("Selection: {} ({} merc{}).",
-			names, sel.size(), sel.size() == 1 ? "" : "s"));
-	}
-
-	// ============================================================
-	//   `team select`
-	// ============================================================
-
-	void cmdTeamSelect(const std::vector<std::string>& args)
-	{
-		if (!inCampaignGate()) return;
-		if (args.size() < 3)
-		{
-			Console_Println("usage: team select <name|tN> [+|-] | team select clear");
-			printSelection();
-			return;
-		}
-		const std::string sub = lower(args[2]);
-		if (sub == "clear")
-		{
-			ResetSelectedListForMapScreen();
-			Console_Println("Selection cleared.");
-			return;
-		}
-
-		// Optional trailing +/-/= modifier.
-		enum class Op { Replace, Add, Remove };
-		Op op = Op::Replace;
-		std::size_t targetEnd = args.size();
-		if (args.size() >= 4)
-		{
-			const std::string last = args.back();
-			if      (last == "+") { op = Op::Add;     targetEnd = args.size() - 1; }
-			else if (last == "-") { op = Op::Remove;  targetEnd = args.size() - 1; }
-			else if (last == "=") { op = Op::Replace; targetEnd = args.size() - 1; }
-		}
-
-		std::string targetRaw;
-		for (std::size_t i = 2; i < targetEnd; ++i)
-		{
-			if (i > 2) targetRaw += " ";
-			targetRaw += args[i];
-		}
-
-		ST::string err;
-		const INT8 slot = resolveCharSlot(targetRaw, err);
-		if (slot < 0) { Console_Println(err); return; }
-
-		switch (op)
-		{
-			case Op::Replace:
-				ResetSelectedListForMapScreen();
-				SetEntryInSelectedCharacterList(slot);
-				break;
-			case Op::Add:
-				SetEntryInSelectedCharacterList(slot);
-				break;
-			case Op::Remove:
-				ResetEntryForSelectedList(slot);
-				break;
-		}
-		printSelection();
-	}
-
-	// ============================================================
 	//   `team sleep`
 	// ============================================================
 
@@ -1280,35 +1183,34 @@ namespace
 		return ST::format("{}: {}", s.name, raw);
 	}
 
-	// Resolve which mercs to move. Order:
-	//   - explicit `from <name|tN>` → that single merc
-	//   - else multi-select → every selected merc
-	//   - else error (handled by caller via empty result)
+	// Resolve which merc to use as the movement-group handle. Strategic
+	// movement operates on squads, not mercs; we just need any merc in the
+	// target squad to feed PlotPathForCharacter and the engine moves the
+	// whole squad. Order:
+	//   - explicit `from <name|tN>` → that merc's squad
+	//   - else the info-pane focus (bSelectedInfoChar) → its squad
+	//   - else error
 	// Vehicles are allowed (vehicles are slots t18..t20 and move via
 	// PlotPathForCharacter the same way mercs do).
-	std::vector<INT8> resolveMoveSet(const std::vector<std::string>& args, ST::string& err)
+	INT8 resolveMoveHandle(const std::vector<std::string>& args, ST::string& err)
 	{
-		std::vector<INT8> out;
-		// Look for `from <name>` token.
 		for (std::size_t i = 2; i + 1 < args.size(); ++i)
 		{
 			if (lower(args[i]) == "from")
 			{
-				const INT8 slot = resolveCharSlot(args[i + 1], err);
-				if (slot < 0) return out;
-				out.push_back(slot);
-				return out;
+				return resolveCharSlot(args[i + 1], err);
 			}
 		}
-		for (INT8 i = 0; i < MAX_CHARACTER_COUNT; ++i)
+		const SOLDIERTYPE* const focus = GetSelectedInfoChar();
+		if (focus)
 		{
-			if (gCharactersList[i].merc && gCharactersList[i].selected)
-				out.push_back(i);
+			for (INT8 i = 0; i < MAX_CHARACTER_COUNT; ++i)
+				if (gCharactersList[i].merc == focus) return i;
 		}
-		if (out.empty())
-			err = ST::string(
-				"no mercs to move. Use 'team select <name>' first, or 'map move <sector> from <name>'.");
-		return out;
+		err = ST::string(
+			"no merc focused. Use 'team merc <name|tN>' to focus one, "
+			"or 'map move <sector> from <name>'.");
+		return -1;
 	}
 
 	// Print one path's route + ETA. PathSt nodes carry strategic indices
@@ -1395,81 +1297,66 @@ namespace
 			return;
 		}
 
-		std::vector<INT8> moveSet = resolveMoveSet(args, err);
-		if (moveSet.empty())
+		const INT8 handle = resolveMoveHandle(args, err);
+		if (handle < 0) { Console_Println(err); return; }
+		SOLDIERTYPE& s = *gCharactersList[handle].merc;
+
+		const MoveError code = CanEntireMovementGroupMercIsInMove(s);
+		if (code != ME_OK)
 		{
-			Console_Println(err);
+			Console_Println(moveErrorString(code, s));
 			return;
 		}
-
-		// Dedupe by movement group — plotting twice into the same group
-		// would just run the path-builder twice and stomp itself.
-		std::vector<INT8> deduped;
-		std::vector<UINT8> seenGroups;
-		for (INT8 slot : moveSet)
+		if (s.sSector == dest)
 		{
-			SOLDIERTYPE& s = *gCharactersList[slot].merc;
-			const UINT8 gid = s.ubGroupID;
-			if (gid != 0 && std::find(seenGroups.begin(), seenGroups.end(), gid) != seenGroups.end())
-				continue;
-			if (gid != 0) seenGroups.push_back(gid);
-			deduped.push_back(slot);
-		}
-
-		// Validate every merc in the move set first. The verb's contract
-		// is "either everyone goes or no one goes and you hear why."
-		for (INT8 slot : deduped)
-		{
-			SOLDIERTYPE& s = *gCharactersList[slot].merc;
-			const MoveError code = CanEntireMovementGroupMercIsInMove(s);
-			if (code != ME_OK)
-			{
-				Console_Println(moveErrorString(code, s));
-				return;
-			}
-			if (s.sSector == dest)
-			{
-				Console_Println(ST::format("{}: already in {}.",
-					s.name, GetSectorIDString(dest, FALSE)));
-				return;
-			}
+			Console_Println(ST::format("{}: already in {}.",
+				s.name, GetSectorIDString(dest, FALSE)));
+			return;
 		}
 
 		// Plot. Replace semantics by default (CancelPathForCharacter
 		// before plotting); keep-path appends. PlotPathForCharacter only
 		// touches pMercPath; the strategic clock acts on the *group's*
 		// waypoint list, so without RebuildWayPointsForGroupPath the path
-		// is dead data and the group never moves. The GUI runs the same
-		// rebuild via RebuildWayPointsForAllSelectedCharsGroups on commit;
-		// we replicate it here, deduped by group.
-		std::size_t plotted = 0;
-		for (INT8 slot : deduped)
-		{
-			SOLDIERTYPE& s = *gCharactersList[slot].merc;
-			if (!keepPath) CancelPathForCharacter(&s);
-			PlotPathForCharacter(s, dest, /*tactical_traversal=*/false);
-			PathSt* const head = GetSoldierMercPathPtr(&s);
-			if (!head) continue;
-			GROUP* const grp = GetGroup(s.ubGroupID);
-			if (grp) RebuildWayPointsForGroupPath(head, *grp);
-			++plotted;
-		}
-		if (plotted == 0)
+		// is dead data and the group never moves.
+		if (!keepPath) CancelPathForCharacter(&s);
+		PlotPathForCharacter(s, dest, /*tactical_traversal=*/false);
+		PathSt* const head = GetSoldierMercPathPtr(&s);
+		if (!head)
 		{
 			Console_Println(
 				"Plotting failed (no path attached). Underground or unreachable destination?");
 			return;
 		}
+		GROUP* const grp = GetGroup(s.ubGroupID);
+		if (grp) RebuildWayPointsForGroupPath(head, *grp);
 
-		Console_Println(ST::format(
-			"Plotted move for {} group{} to {}.",
-			plotted, plotted == 1 ? "" : "s",
-			GetSectorIDString(dest, FALSE)));
-		for (INT8 slot : deduped)
+		// Name the squad and its members so the user can hear *who* is
+		// travelling. The vanilla model (manual p.41): "send an entire
+		// squad to a far-off sector — choose any merc in that squad."
+		// The handle merc is a stand-in; the whole squad goes.
+		ST::string who;
+		if (isOnSquad(s))
 		{
-			SOLDIERTYPE& s = *gCharactersList[slot].merc;
-			printPathSummary(s);
+			const int sq = squadNumber(s);
+			ST::string members;
+			// Squad[] entries can be null — the engine's FOR_EACH_IN_SQUAD
+			// macro guards on `if (!*iter) continue` for the same reason.
+			FOR_EACH_IN_SQUAD(it, sq - 1)
+			{
+				if (!members.empty()) members += ", ";
+				members += (*it)->name;
+			}
+			who = ST::format("Squad {} ({})", sq, members);
 		}
+		else
+		{
+			who = s.name;
+		}
+
+		Console_Println(ST::format("Plotted route to {} for {}.",
+			GetSectorIDString(dest, FALSE), who));
+		printPathSummary(s);
 		if (giTimeCompressMode == TIME_COMPRESS_X0)
 			Console_Println(
 				"Time is paused — use 'compress fast' to start moving.");
@@ -1478,15 +1365,36 @@ namespace
 	void cmdMapCancel(const std::vector<std::string>& args)
 	{
 		if (!inCampaignGate()) return;
+
+		// No arg: cancel for the focused merc's squad (mirrors map move's
+		// default-handle model). With <name>: cancel for that merc's squad.
+		INT8 slot;
 		if (args.size() < 3)
 		{
-			CancelPathsOfAllSelectedCharacters();
-			Console_Println("Cancelled paths for all selected mercs.");
-			return;
+			const SOLDIERTYPE* const focus = GetSelectedInfoChar();
+			if (!focus)
+			{
+				Console_Println(
+					"no merc focused. Use 'team merc <name|tN>' first, "
+					"or 'map cancel <name|tN>'.");
+				return;
+			}
+			slot = -1;
+			for (INT8 i = 0; i < MAX_CHARACTER_COUNT; ++i)
+				if (gCharactersList[i].merc == focus) { slot = i; break; }
+			if (slot < 0)
+			{
+				Console_Println("focused merc not found in mapscreen list.");
+				return;
+			}
 		}
-		ST::string err;
-		const INT8 slot = resolveCharSlot(joinFrom(args, 2), err);
-		if (slot < 0) { Console_Println(err); return; }
+		else
+		{
+			ST::string err;
+			slot = resolveCharSlot(joinFrom(args, 2), err);
+			if (slot < 0) { Console_Println(err); return; }
+		}
+
 		SOLDIERTYPE& s = *gCharactersList[slot].merc;
 		if (!GetSoldierMercPathPtr(&s))
 		{
@@ -1494,7 +1402,9 @@ namespace
 			return;
 		}
 		CancelPathForCharacter(&s);
-		Console_Println(ST::format("{}: path cancelled.", s.name));
+		Console_Println(isOnSquad(s)
+			? ST::format("Squad {}: path cancelled.", squadNumber(s))
+			: ST::format("{}: path cancelled.", s.name));
 	}
 
 	// ============================================================
@@ -1644,12 +1554,11 @@ void Cmd_Team(const std::vector<std::string>& args)
 	const std::string sub = lower(args[1]);
 	if (sub == "list")   { cmdTeamList(args);   return; }
 	if (sub == "merc")   { cmdTeamMerc(args);   return; }
-	if (sub == "select") { cmdTeamSelect(args); return; }
 	if (sub == "sleep")  { cmdTeamSleep(args);  return; }
 
 	Console_Println(ST::format(
-		"unknown subcommand: team {} (try 'team', 'team list', 'team merc <name|tN>', "
-		"'team select <name|tN> [+|-]', 'team sleep <name|tN> <on|off>')",
+		"unknown subcommand: team {} (try 'team', 'team list', "
+		"'team merc <name|tN>', 'team sleep <name|tN> <on|off>')",
 		args[1]));
 }
 
