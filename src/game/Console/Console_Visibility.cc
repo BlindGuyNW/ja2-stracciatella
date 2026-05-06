@@ -19,8 +19,13 @@ bool IsKnownSoldier(const SOLDIERTYPE& s)
 	if (s.bTeam == OUR_TEAM) return true;
 
 	// For non-friendly soldiers, the team-known opplist drives visibility:
-	// any teammate's sighting counts. Values > NOT_HEARD_OR_SEEN mean we
-	// have at least heard or seen the target.
+	// any teammate's sighting counts. NOT_HEARD_OR_SEEN (=0) is the only
+	// "unknown" value; positive values are SEEN_*_TURNS_AGO and negative
+	// are HEARD_*_TURNS_AGO. We accept stale-but-not-yet-decayed values
+	// (the engine's own AI uses the same `!= NOT_HEARD_OR_SEEN` test for
+	// "have we ever encountered this guy" — see AIUtils.cc, Knowledge.cc),
+	// and DecayOppListValue (OppList.cc:209) zeroes them out after the
+	// OLDEST_*_VALUE thresholds, so the fade-out happens automatically.
 	const INT8 known = gbPublicOpplist[OUR_TEAM][s.ubID];
 	return known != NOT_HEARD_OR_SEEN;
 }

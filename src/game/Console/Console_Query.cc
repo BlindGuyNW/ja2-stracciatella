@@ -430,10 +430,19 @@ namespace
 		INT16 gridno;
 	};
 
+	// Unlike doors (which are ungated because they're the building's outer
+	// silhouette and visible to a sighted player at a glance), containers
+	// are interior loot markers — sighted players don't see footlockers
+	// inside an unentered building because the roof hides them. Gate on
+	// MAPELEMENT_REVEALED so we don't pre-spoil the contents of every
+	// crate in the sector. Level 0 is the right channel: openable
+	// structures sit on the ground, and the engine sets REVEALED on the
+	// ground tile when a merc's FOV reaches it.
 	void enumerateContainers(const SOLDIERTYPE& observer, std::vector<ListedContainer>& out)
 	{
 		for (INT16 g = 0; g < WORLD_MAX; ++g)
 		{
+			if (!ConsoleVis::IsKnownTile(g, 0)) continue;
 			STRUCTURE* const s = findStructureExcluding(
 				g, STRUCTURE_OPENABLE, STRUCTURE_ANYDOOR | STRUCTURE_SWITCH);
 			if (!s) continue;
