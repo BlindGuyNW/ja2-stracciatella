@@ -9,7 +9,9 @@
 #include "Interface_Dialogue.h"
 #include "JAScreens.h"
 #include "MainMenuScreen.h"
+#include "Map_Information.h"
 #include "Meanwhile.h"
+#include "Options_Screen.h"
 #include "Overhead.h"
 #include "PreBattle_Interface.h"
 #include "SaveLoadGame.h"
@@ -436,6 +438,26 @@ namespace
 		// rotated out before we clobber it.
 		if (existing) BackupSavedGame(name);
 
+		// SaveGeneralInfo writes guiPreviousOptionScreen as the save's
+		// "go to this screen after loading" field (SaveLoadGame.cc:1767).
+		// Vanilla save paths always run after a transition into
+		// OPTIONS_SCREEN that sets the global to wherever the player
+		// came from; console saves skip that, so without this line the
+		// global stays at its file-static default (OPTIONS_SCREEN, see
+		// Options_Screen.cc:122) and every load lands on the in-game
+		// Options panel.
+		//
+		// We can't naively mirror guiCurrentScreen — the user can save
+		// from a screen that isn't a viable resume target (OPTIONS_SCREEN
+		// itself, MAINMENU_SCREEN if a campaign is somehow active there,
+		// SAVE_LOAD_SCREEN, etc.). When the current screen isn't a
+		// gameplay screen, derive the resume target from world state:
+		// tactical if the sector world is loaded, strategic otherwise.
+		guiPreviousOptionScreen =
+			(guiCurrentScreen == GAME_SCREEN || guiCurrentScreen == MAP_SCREEN)
+				? guiCurrentScreen
+				: (gfWorldLoaded ? GAME_SCREEN : MAP_SCREEN);
+
 		BOOLEAN ok = SaveGame(name, name);
 		if (!ok)
 		{
@@ -459,6 +481,14 @@ namespace
 			Console_Println(ST::format("Cannot save: {}", err));
 			return;
 		}
+		// Vanilla quicksave call sites (Turn_Based_Input.cc:1964,
+		// MapScreen.cc:2996) prep this before DoQuickSave; see the long
+		// comment in cmdSaveCreate for why the console path has to do
+		// the same and why we don't blindly mirror guiCurrentScreen.
+		guiPreviousOptionScreen =
+			(guiCurrentScreen == GAME_SCREEN || guiCurrentScreen == MAP_SCREEN)
+				? guiCurrentScreen
+				: (gfWorldLoaded ? GAME_SCREEN : MAP_SCREEN);
 		// DoQuickSave handles the DIF_DEAD_IS_DEAD route internally and
 		// shows its own error popup on failure; we let it.
 		DoQuickSave();
