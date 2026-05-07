@@ -167,28 +167,15 @@ void Cmd_Sector(const std::vector<std::string>&)
 		name, guiHour, guiMin, phase));
 }
 
-void Cmd_Merc(const std::vector<std::string>& args)
+void PrintMercSummary(const SOLDIERTYPE& s)
 {
-	SOLDIERTYPE* s = nullptr;
-	if (args.size() < 2)
-	{
-		s = GetSelectedMan();
-		if (!s) { Console_Println("No merc selected."); return; }
-	}
-	else
-	{
-		ST::string err;
-		s = findTeammateByName(args[1], err);
-		if (!s) { Console_Println(err); return; }
-	}
-
-	const UINT16 inHand    = s->inv[HANDPOS].usItem;
-	const UINT8  shotsLeft = s->inv[HANDPOS].ubGunShotsLeft;
+	const UINT16 inHand    = s.inv[HANDPOS].usItem;
+	const UINT8  shotsLeft = s.inv[HANDPOS].ubGunShotsLeft;
 
 	Console_Println(ST::format(
 		"{}: life {}/{}, breath {}/{}, AP {}, {} facing {}.",
-		s->name, s->bLife, s->bLifeMax, s->bBreath, s->bBreathMax,
-		s->bActionPoints, stanceWord(*s), directionWord(s->bDirection)));
+		s.name, s.bLife, s.bLifeMax, s.bBreath, s.bBreathMax,
+		s.bActionPoints, stanceWord(s), directionWord(s.bDirection)));
 
 	if (inHand == 0)
 	{
@@ -206,6 +193,24 @@ void Cmd_Merc(const std::vector<std::string>& args)
 	{
 		Console_Println(ST::format("  In hand: {}.", itemName(inHand)));
 	}
+}
+
+void Cmd_Merc(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* s = nullptr;
+	if (args.size() < 2)
+	{
+		s = GetSelectedMan();
+		if (!s) { Console_Println("No merc selected."); return; }
+	}
+	else
+	{
+		ST::string err;
+		s = findTeammateByName(args[1], err);
+		if (!s) { Console_Println(err); return; }
+	}
+
+	PrintMercSummary(*s);
 }
 
 namespace

@@ -1,7 +1,10 @@
 #include "Console_Action.h"
 #include "Console_Address.h"
+#include "Console_Query.h"
 
 #include "Console.h"
+
+#include "ScreenIDs.h"
 
 #include "AI.h"
 #include "Animation_Control.h"
@@ -27,6 +30,7 @@
 #include "ItemModel.h"
 #include "Item_Types.h"
 #include "Items.h"
+#include "JAScreens.h"
 #include "LOS.h"
 #include "Map_Information.h"
 #include "MercProfile.h"
@@ -148,8 +152,22 @@ void Cmd_Select(const std::vector<std::string>& args)
 	SOLDIERTYPE* const s = findTeammateByName(args[1], err);
 	if (!s) { Console_Println(err); return; }
 
-	SetSelectedMan(s);
-	Console_Println(ST::format("Selected: {}.", s->name));
+	// On the tactical screen, route through the engine's SelectSoldier so
+	// squad / panel / level sync, the merc attn voice line, and the
+	// "is unavailable" feedback all fire — same path as a keyboard F-key.
+	// SelectSoldier early-returns on LAPTOP/MAP screens (Overhead.cc:1986),
+	// so for those we keep the bare setter; the merc summary still prints.
+	if (guiCurrentScreen == GAME_SCREEN)
+	{
+		SelectSoldier(s, SELSOLDIER_FROM_UI | SELSOLDIER_ACKNOWLEDGE | SELSOLDIER_FORCE_RESELECT);
+		if (GetSelectedMan() != s) return; // SelectSoldier rejected; it already screen-msg'd why.
+	}
+	else
+	{
+		SetSelectedMan(s);
+	}
+
+	PrintMercSummary(*s);
 }
 
 void Cmd_EndTurn(const std::vector<std::string>&)

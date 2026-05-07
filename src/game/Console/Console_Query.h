@@ -8,8 +8,15 @@
  * All visibility checks route through ConsoleVis::IsKnownSoldier /
  * ConsoleVis::IsKnownTile so fog-of-war stays in one place. */
 
+struct SOLDIERTYPE;
+
 void Cmd_Sector   (const std::vector<std::string>& args);
 void Cmd_Merc     (const std::vector<std::string>& args);
+
+// Compact selected-merc state line: "<name>: life X/Y, breath X/Y, AP N,
+// <stance> facing <dir>." plus a held-weapon line. Shared so `select` can
+// echo the same prompt the `merc` verb produces.
+void PrintMercSummary(const SOLDIERTYPE& s);
 void Cmd_Stats    (const std::vector<std::string>& args);
 void Cmd_Nearby   (const std::vector<std::string>& args);
 void Cmd_Look     (const std::vector<std::string>& args);
