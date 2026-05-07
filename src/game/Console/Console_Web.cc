@@ -6,6 +6,7 @@
 #include "ScreenIDs.h"
 
 #include "Console.h"
+#include "Console_Address.h"
 
 #include <cctype>
 #include <cstddef>
@@ -42,12 +43,6 @@ namespace
 		if (guiCurrentScreen == LAPTOP_SCREEN) return true;
 		Console_Println("Open your laptop first.");
 		return false;
-	}
-
-	std::string lower(std::string s)
-	{
-		for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-		return s;
 	}
 
 	bool isBookmarked(INT32 id)

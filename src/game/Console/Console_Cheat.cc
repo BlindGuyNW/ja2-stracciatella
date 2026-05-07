@@ -14,6 +14,7 @@
 #include "Types.h"
 
 #include "Console.h"
+#include "Console_Address.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -25,22 +26,6 @@
 namespace
 {
 	using ArgList = std::vector<std::string>;
-
-	std::string lower(std::string s)
-	{
-		for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-		return s;
-	}
-
-	bool parseInt(const std::string& s, long& out)
-	{
-		if (s.empty()) return false;
-		char* end = nullptr;
-		long v = std::strtol(s.c_str(), &end, 10);
-		if (end == s.c_str() || *end != '\0') return false;
-		out = v;
-		return true;
-	}
 
 	// Mirrors the engine's natural unlock at Player_Command.cc:91 (flag
 	// flip on liberating the shipping destination), plus the bookmark add

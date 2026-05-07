@@ -24,6 +24,7 @@
 #include "WordWrap.h"
 
 #include "Console.h"
+#include "Console_Address.h"
 
 #include <algorithm>
 #include <array>
@@ -39,12 +40,6 @@ namespace
 {
 	// ----- General helpers --------------------------------------------
 
-	std::string lower(std::string s)
-	{
-		for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-		return s;
-	}
-
 	std::string joinFrom(const std::vector<std::string>& args, std::size_t from)
 	{
 		std::string out;
@@ -54,16 +49,6 @@ namespace
 			out += args[i];
 		}
 		return lower(out);
-	}
-
-	bool parseInt(const std::string& s, long& out)
-	{
-		if (s.empty()) return false;
-		char* end = nullptr;
-		long v = std::strtol(s.c_str(), &end, 10);
-		if (end == s.c_str() || *end != '\0') return false;
-		out = v;
-		return true;
 	}
 
 	// ----- Gates ------------------------------------------------------
@@ -401,7 +386,7 @@ namespace
 
 	// ----- bobbyr (summary) -------------------------------------------
 
-	void cmdSummary()
+	void cmdSummary(const std::vector<std::string>&)
 	{
 		if (!unlockGate()) return;
 
@@ -816,7 +801,7 @@ namespace
 
 	// ----- bobbyr cart ------------------------------------------------
 
-	void cmdCart()
+	void cmdCart(const std::vector<std::string>&)
 	{
 		if (!unlockGate()) return;
 		const auto st = BobbyR_GetOrderState();
@@ -861,7 +846,7 @@ namespace
 
 	// ----- bobbyr clear -----------------------------------------------
 
-	void cmdClear()
+	void cmdClear(const std::vector<std::string>&)
 	{
 		if (!unlockGate()) return;
 		BobbyR_ClearCart();
@@ -980,7 +965,7 @@ namespace
 
 	// ----- bobbyr status ----------------------------------------------
 
-	void cmdStatus()
+	void cmdStatus(const std::vector<std::string>&)
 	{
 		if (!unlockGate()) return;
 		const auto st = BobbyR_GetOrderState();
@@ -1025,7 +1010,7 @@ namespace
 
 	// ----- bobbyr checkout --------------------------------------------
 
-	void cmdCheckout()
+	void cmdCheckout(const std::vector<std::string>&)
 	{
 		if (!unlockGate()) return;
 		ST::string fail;
@@ -1056,7 +1041,7 @@ namespace
 
 	// ----- bobbyr cancel ----------------------------------------------
 
-	void cmdCancel()
+	void cmdCancel(const std::vector<std::string>&)
 	{
 		if (!unlockGate()) return;
 		const auto st = BobbyR_GetOrderState();
@@ -1067,7 +1052,7 @@ namespace
 			return;
 		}
 		Console_Println("(no confirm overlay up; nothing to cancel)");
-		cmdStatus();
+		cmdStatus({});
 	}
 
 	// ----- bobbyr page ------------------------------------------------
@@ -1123,7 +1108,7 @@ namespace
 
 	// ----- bobbyr shipments / shipment --------------------------------
 
-	void cmdShipments()
+	void cmdShipments(const std::vector<std::string>&)
 	{
 		if (!unlockGate()) return;
 		std::size_t active = 0;
@@ -1219,30 +1204,53 @@ namespace
 	}
 }
 
+namespace
+{
+	struct BobbyrSub
+	{
+		const char* name;
+		void      (*fn)(const std::vector<std::string>&);
+	};
+
+	// "rm" is a short alias for "remove" — repeated entry over an alias
+	// field so each row stays a self-contained one-liner.
+	const BobbyrSub kBobbyrSubs[] =
+	{
+		{ "list",      &cmdList      },
+		{ "show",      &cmdShow      },
+		{ "add",       &cmdAdd       },
+		{ "remove",    &cmdRemove    },
+		{ "rm",        &cmdRemove    },
+		{ "cart",      &cmdCart      },
+		{ "clear",     &cmdClear     },
+		{ "ship",      &cmdShip      },
+		{ "speed",     &cmdSpeed     },
+		{ "status",    &cmdStatus    },
+		{ "checkout",  &cmdCheckout  },
+		{ "cancel",    &cmdCancel    },
+		{ "page",      &cmdPage      },
+		{ "shipments", &cmdShipments },
+		{ "shipment",  &cmdShipment  },
+	};
+}
+
 void Cmd_Bobbyr(const std::vector<std::string>& args)
 {
-	if (args.size() < 2) { cmdSummary(); return; }
+	if (args.size() < 2) { cmdSummary(args); return; }
 
 	const std::string sub = lower(args[1]);
-	if (sub == "list")      { cmdList(args); return; }
-	if (sub == "show")      { cmdShow(args); return; }
-	if (sub == "add")       { cmdAdd(args); return; }
-	if (sub == "remove" ||
-	    sub == "rm")        { cmdRemove(args); return; }
-	if (sub == "cart")      { cmdCart(); return; }
-	if (sub == "clear")     { cmdClear(); return; }
-	if (sub == "ship")      { cmdShip(args); return; }
-	if (sub == "speed")     { cmdSpeed(args); return; }
-	if (sub == "status")    { cmdStatus(); return; }
-	if (sub == "checkout")  { cmdCheckout(); return; }
-	if (sub == "cancel")    { cmdCancel(); return; }
-	if (sub == "page")      { cmdPage(args); return; }
-	if (sub == "shipments") { cmdShipments(); return; }
-	if (sub == "shipment")  { cmdShipment(args); return; }
+	for (const auto& e : kBobbyrSubs)
+	{
+		if (sub == e.name) { e.fn(args); return; }
+	}
 
+	std::string list;
+	for (const auto& e : kBobbyrSubs)
+	{
+		if (!list.empty()) list += ", ";
+		list += e.name;
+	}
 	Console_Println(ST::format(
-		"unknown subcommand: bobbyr {} "
-		"(try list, show, add, remove, cart, clear, ship, speed, status, "
-		"checkout, cancel, page, shipments, shipment)",
-		args[1]));
+		"unknown subcommand: bobbyr {} (try 'bobbyr' alone, or one of: {})",
+		args[1], list));
 }

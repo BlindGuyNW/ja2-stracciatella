@@ -21,6 +21,7 @@
 #include "WordWrap.h"
 
 #include "Console.h"
+#include "Console_Address.h"
 
 #include <algorithm>
 #include <array>
@@ -102,12 +103,6 @@ namespace
 
 	// ----- Argument helpers --------------------------------------------
 
-	std::string lower(std::string s)
-	{
-		for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-		return s;
-	}
-
 	// Joins arg tokens [from..end] with single spaces. Used so multi-word
 	// names ("mr. magic") survive the dispatcher's whitespace tokenization.
 	std::string joinFrom(const std::vector<std::string>& args, std::size_t from)
@@ -119,16 +114,6 @@ namespace
 			out += args[i];
 		}
 		return lower(out);
-	}
-
-	bool parseInt(const std::string& s, long& out)
-	{
-		if (s.empty()) return false;
-		char* end = nullptr;
-		long v = std::strtol(s.c_str(), &end, 10);
-		if (end == s.c_str() || *end != '\0') return false;
-		out = v;
-		return true;
 	}
 
 	// ----- aN tag table ------------------------------------------------
@@ -359,7 +344,7 @@ namespace
 	// (AIM.cc::SelectMemberCardRegionCallBack). The card is a
 	// MOUSE_REGION, not a GUI_BUTTON, so `g list` cannot surface it —
 	// this verb is the only way an SR user can perform that click.
-	void cmdMembers()
+	void cmdMembers(const std::vector<std::string>&)
 	{
 		if (guiCurrentScreen != LAPTOP_SCREEN)
 		{
@@ -388,7 +373,7 @@ namespace
 		Console_Println("Loading AIM Members …");
 	}
 
-	void cmdSummary()
+	void cmdSummary(const std::vector<std::string>&)
 	{
 		if (!membersLoadedGate()) return;
 		std::size_t hireable = 0;
@@ -832,7 +817,7 @@ namespace
 	}
 
 	// ----- aim status -------------------------------------------------
-	void cmdStatus()
+	void cmdStatus(const std::vector<std::string>&)
 	{
 		if (!onMembersGate()) return;
 		const auto st = AIMMembers_GetPopupState();
@@ -869,7 +854,7 @@ namespace
 	}
 
 	// ----- aim authorize ----------------------------------------------
-	void cmdAuthorize()
+	void cmdAuthorize(const std::vector<std::string>&)
 	{
 		if (!onMembersGate()) return;
 		const auto st = AIMMembers_GetPopupState();
@@ -899,7 +884,7 @@ namespace
 	}
 
 	// ----- aim cancel -------------------------------------------------
-	void cmdCancel()
+	void cmdCancel(const std::vector<std::string>&)
 	{
 		if (!onMembersGate()) return;
 		const auto st = AIMMembers_GetPopupState();
@@ -927,7 +912,7 @@ namespace
 	}
 
 	// ----- aim contact ------------------------------------------------
-	void cmdContact()
+	void cmdContact(const std::vector<std::string>&)
 	{
 		if (guiCurrentScreen != LAPTOP_SCREEN ||
 			guiCurrentLaptopMode != LAPTOP_MODE_AIM_MEMBERS)
@@ -1262,31 +1247,52 @@ namespace
 	}
 }
 
+namespace
+{
+	struct AimSub
+	{
+		const char* name;
+		void      (*fn)(const std::vector<std::string>&);
+	};
+
+	// Order is the order surfaced in the unknown-subcommand error message,
+	// so put orientation/list-style subs first, action subs after.
+	const AimSub kAimSubs[] =
+	{
+		{ "members",   &cmdMembers   },
+		{ "list",      &cmdList      },
+		{ "merc",      &cmdMerc      },
+		{ "show",      &cmdShow      },
+		{ "contact",   &cmdContact   },
+		{ "length",    &cmdLength    },
+		{ "gear",      &cmdGear      },
+		{ "status",    &cmdStatus    },
+		{ "authorize", &cmdAuthorize },
+		{ "cancel",    &cmdCancel    },
+		{ "archives",  &cmdArchives  },
+		{ "history",   &cmdHistory   },
+		{ "policies",  &cmdPolicies  },
+		{ "links",     &cmdLinks     },
+	};
+}
+
 void Cmd_Aim(const std::vector<std::string>& args)
 {
-	if (args.size() < 2) { cmdSummary(); return; }
+	if (args.size() < 2) { cmdSummary(args); return; }
 
 	const std::string sub = lower(args[1]);
-	if (sub == "members")   { cmdMembers(); return; }
-	if (sub == "list")      { cmdList(args); return; }
-	if (sub == "merc")      { cmdMerc(args); return; }
-	if (sub == "show")      { cmdShow(args); return; }
-	if (sub == "contact")   { cmdContact(); return; }
-	if (sub == "length")    { cmdLength(args); return; }
-	if (sub == "gear")      { cmdGear(args); return; }
-	if (sub == "status")    { cmdStatus(); return; }
-	if (sub == "authorize") { cmdAuthorize(); return; }
-	if (sub == "cancel")    { cmdCancel(); return; }
-	if (sub == "archives")  { cmdArchives(args); return; }
-	if (sub == "history")   { cmdHistory(args); return; }
-	if (sub == "policies")  { cmdPolicies(args); return; }
-	if (sub == "links")     { cmdLinks(args); return; }
+	for (const auto& e : kAimSubs)
+	{
+		if (sub == e.name) { e.fn(args); return; }
+	}
 
+	std::string list;
+	for (const auto& e : kAimSubs)
+	{
+		if (!list.empty()) list += ", ";
+		list += e.name;
+	}
 	Console_Println(ST::format(
-		"unknown subcommand: aim {} "
-		"(try 'aim', 'aim members', 'aim list', 'aim merc <name>', "
-		"'aim show <name>', 'aim contact', 'aim length', 'aim gear', "
-		"'aim status', 'aim authorize', 'aim cancel', "
-		"'aim archives', 'aim history', 'aim policies', 'aim links')",
-		args[1]));
+		"unknown subcommand: aim {} (try 'aim' alone, or one of: {})",
+		args[1], list));
 }

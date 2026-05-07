@@ -66,64 +66,6 @@
 
 namespace
 {
-	bool startsWithCI(const ST::string& haystack, const std::string& needle)
-	{
-		if (needle.size() > haystack.size()) return false;
-		for (std::size_t i = 0; i < needle.size(); ++i)
-		{
-			const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(haystack.c_str()[i])));
-			const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(needle[i])));
-			if (a != b) return false;
-		}
-		return true;
-	}
-
-	SOLDIERTYPE* findTeammateByName(const std::string& needle, ST::string& errorOut)
-	{
-		SOLDIERTYPE* match = nullptr;
-		int matchCount = 0;
-		FOR_EACH_MERC(it)
-		{
-			SOLDIERTYPE* const s = *it;
-			if (s->bTeam != OUR_TEAM) continue;
-			if (!s->bActive)          continue;
-			if (s->bLife <= 0)        continue;
-			if (!s->bInSector)        continue;
-			if (!startsWithCI(s->name, needle)) continue;
-			match = s;
-			++matchCount;
-		}
-		if (matchCount == 0) { errorOut = ST::format("no teammate matches '{}'", needle); return nullptr; }
-		if (matchCount > 1)  { errorOut = ST::format("'{}' is ambiguous; use a longer prefix", needle); return nullptr; }
-		return match;
-	}
-
-	bool parseInt(const std::string& s, int& out)
-	{
-		if (s.empty()) return false;
-		char* end = nullptr;
-		long v = std::strtol(s.c_str(), &end, 10);
-		if (end == s.c_str() || *end != '\0') return false;
-		out = static_cast<int>(v);
-		return true;
-	}
-
-	INT8 parseCompass(const std::string& tok)
-	{
-		std::string s;
-		s.reserve(tok.size());
-		for (char c : tok) s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-		if (s == "n"  || s == "north")     return NORTH;
-		if (s == "ne" || s == "northeast") return NORTHEAST;
-		if (s == "e"  || s == "east")      return EAST;
-		if (s == "se" || s == "southeast") return SOUTHEAST;
-		if (s == "s"  || s == "south")     return SOUTH;
-		if (s == "sw" || s == "southwest") return SOUTHWEST;
-		if (s == "w"  || s == "west")      return WEST;
-		if (s == "nw" || s == "northwest") return NORTHWEST;
-		return -1;
-	}
-
 	// Equivalent to Handle_UI.cc::MakeSoldierTurn (file-static there).
 	// Routes through the same primitives the player UI uses on a "look at"
 	// click: GetAPsToLook for cost, EnoughPoints for affordability, and
@@ -183,11 +125,7 @@ void Cmd_Stance(const std::vector<std::string>& args)
 		Console_Println("usage: stance <p|c|s>");
 		return;
 	}
-	if (!GetSelectedMan())
-	{
-		Console_Println("No merc selected.");
-		return;
-	}
+	if (!requireSelectedMerc()) return;
 
 	UINT8 newStance;
 	const char ch = static_cast<char>(std::tolower(static_cast<unsigned char>(args[1][0])));
@@ -207,12 +145,8 @@ void Cmd_Stance(const std::vector<std::string>& args)
 
 void Cmd_Turn(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel)
-	{
-		Console_Println("No merc selected.");
-		return;
-	}
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 	if (args.size() < 2)
 	{
 		Console_Println("usage: turn <n|ne|e|...|nw> | turn <name> | turn <col,row>");
@@ -293,12 +227,8 @@ namespace
 
 void Cmd_Move(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel)
-	{
-		Console_Println("No merc selected.");
-		return;
-	}
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 	if (args.size() < 2)
 	{
 		Console_Println("usage: move <target> [run]");
@@ -426,12 +356,8 @@ void Cmd_MoveAll(const std::vector<std::string>& args)
 		return;
 	}
 
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel)
-	{
-		Console_Println("No merc selected to anchor 'move-all' on.");
-		return;
-	}
+	SOLDIERTYPE* const sel = requireSelectedMerc("No merc selected to anchor 'move-all' on.");
+	if (!sel) return;
 	if (args.size() < 2)
 	{
 		Console_Println("usage: move-all <target> [run]");
@@ -532,8 +458,8 @@ void Cmd_MoveAll(const std::vector<std::string>& args)
 
 void Cmd_Climb(const std::vector<std::string>&)
 {
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 
 	// Mirror BtnClimbCallback (Interface_Panels.cc:2086): try down → up →
 	// fence in priority order. Same dispatch the panel "Climb" button uses,
@@ -592,12 +518,8 @@ void Cmd_Climb(const std::vector<std::string>&)
 
 void Cmd_Fire(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel)
-	{
-		Console_Println("No merc selected.");
-		return;
-	}
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 	if (args.size() < 2)
 	{
 		Console_Println("usage: fire <target> [aim 0-4]");
@@ -685,8 +607,8 @@ void Cmd_Reload(const std::vector<std::string>& args)
 	SOLDIERTYPE* s = nullptr;
 	if (args.size() < 2)
 	{
-		s = GetSelectedMan();
-		if (!s) { Console_Println("No merc selected."); return; }
+		s = requireSelectedMerc();
+		if (!s) return;
 	}
 	else
 	{
@@ -764,8 +686,8 @@ void Cmd_Reload(const std::vector<std::string>& args)
 
 void Cmd_Pickup(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 
 	// No arg: pick up at the merc's current tile (walked-onto-it case).
 	// Otherwise parse a target tile (compass+steps, col,row, or a known soldier
@@ -826,8 +748,8 @@ void Cmd_Pickup(const std::vector<std::string>& args)
 
 void Cmd_Bandage(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 
 	// Default target = self (most common case: bandage yourself).
 	SOLDIERTYPE* patient = sel;
@@ -933,8 +855,8 @@ namespace
 
 void Cmd_SwapHands(const std::vector<std::string>&)
 {
-	SOLDIERTYPE* const s = GetSelectedMan();
-	if (!s) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const s = requireSelectedMerc();
+	if (!s) return;
 	if (AM_A_ROBOT(s))
 	{
 		Console_Println(ST::format("{} cannot manipulate items.", s->name));
@@ -976,8 +898,8 @@ void Cmd_SwapHands(const std::vector<std::string>&)
 
 void Cmd_Swap(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const s = GetSelectedMan();
-	if (!s) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const s = requireSelectedMerc();
+	if (!s) return;
 	if (AM_A_ROBOT(s))
 	{
 		Console_Println(ST::format("{} cannot manipulate items.", s->name));
@@ -1070,8 +992,8 @@ void Cmd_Swap(const std::vector<std::string>& args)
 
 void Cmd_Drop(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const s = GetSelectedMan();
-	if (!s) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const s = requireSelectedMerc();
+	if (!s) return;
 	if (AM_AN_EPC(s))
 	{
 		Console_Println(ST::format("{} is an escort and refuses to handle items.", s->name));
@@ -1141,8 +1063,8 @@ void Cmd_Drop(const std::vector<std::string>& args)
 
 void Cmd_Give(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const giver = GetSelectedMan();
-	if (!giver) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const giver = requireSelectedMerc();
+	if (!giver) return;
 	if (AM_A_ROBOT(giver))
 	{
 		Console_Println(ST::format("{} cannot hand items to anyone.", giver->name));
@@ -1508,8 +1430,8 @@ void Cmd_Talk(const std::vector<std::string>& args)
 		return;
 	}
 
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 	if (AM_A_ROBOT(sel))
 	{
 		Console_Println(ST::format("{} cannot talk to anyone.", sel->name));
@@ -1763,8 +1685,8 @@ void Cmd_Exit(const std::vector<std::string>& args)
 
 void Cmd_Throw(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 	if (args.size() < 3)
 	{
 		Console_Println("usage: throw <slot> <target>  (slot is s1..s19; target is name, any nearby tag, dir steps, or col,row)");
@@ -1855,8 +1777,8 @@ void Cmd_Throw(const std::vector<std::string>& args)
 
 void Cmd_Attach(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const s = GetSelectedMan();
-	if (!s) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const s = requireSelectedMerc();
+	if (!s) return;
 	if (AM_AN_EPC(s) || AM_A_ROBOT(s))
 	{
 		Console_Println(ST::format("{} cannot manipulate attachments.", s->name));
@@ -1952,8 +1874,8 @@ void Cmd_Attach(const std::vector<std::string>& args)
 
 void Cmd_Arm(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const s = GetSelectedMan();
-	if (!s) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const s = requireSelectedMerc();
+	if (!s) return;
 	if (args.size() < 2)
 	{
 		Console_Println("usage: arm <slot> [turns <N> | freq <F> | pressure]  (slot is s1..s19)");
@@ -2111,8 +2033,8 @@ void Cmd_Arm(const std::vector<std::string>& args)
 
 void Cmd_Plant(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const s = GetSelectedMan();
-	if (!s) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const s = requireSelectedMerc();
+	if (!s) return;
 	if (AM_AN_EPC(s))
 	{
 		Console_Println(ST::format("{} is an escort and refuses to handle items.", s->name));
@@ -2215,8 +2137,8 @@ void Cmd_Plant(const std::vector<std::string>& args)
 
 void Cmd_Detonate(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const s = GetSelectedMan();
-	if (!s) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const s = requireSelectedMerc();
+	if (!s) return;
 	if (args.size() < 2)
 	{
 		Console_Println(ST::format(

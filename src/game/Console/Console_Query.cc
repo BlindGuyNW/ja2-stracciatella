@@ -102,40 +102,6 @@ namespace
 		}
 	}
 
-	bool startsWithCI(const ST::string& haystack, const std::string& needle)
-	{
-		if (needle.size() > haystack.size()) return false;
-		for (std::size_t i = 0; i < needle.size(); ++i)
-		{
-			const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(haystack.c_str()[i])));
-			const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(needle[i])));
-			if (a != b) return false;
-		}
-		return true;
-	}
-
-	// merc <name> matches teammates only — non-teammate names should go
-	// through the more general address parser when they make sense.
-	SOLDIERTYPE* findTeammateByName(const std::string& needle, ST::string& errorOut)
-	{
-		SOLDIERTYPE* match = nullptr;
-		int matchCount = 0;
-		FOR_EACH_MERC(it)
-		{
-			SOLDIERTYPE* const s = *it;
-			if (s->bTeam != OUR_TEAM) continue;
-			if (!s->bActive)          continue;
-			if (s->bLife <= 0)        continue;
-			if (!s->bInSector)        continue;
-			if (!startsWithCI(s->name, needle)) continue;
-			match = s;
-			++matchCount;
-		}
-		if (matchCount == 0) { errorOut = ST::format("no teammate matches '{}'", needle); return nullptr; }
-		if (matchCount > 1)  { errorOut = ST::format("'{}' is ambiguous; use a longer prefix", needle); return nullptr; }
-		return match;
-	}
-
 	ST::string itemName(UINT16 usItem)
 	{
 		if (usItem == 0) return ST::string("empty");
@@ -201,8 +167,8 @@ void Cmd_Merc(const std::vector<std::string>& args)
 	SOLDIERTYPE* s = nullptr;
 	if (args.size() < 2)
 	{
-		s = GetSelectedMan();
-		if (!s) { Console_Println("No merc selected."); return; }
+		s = requireSelectedMerc();
+		if (!s) return;
 	}
 	else
 	{
@@ -242,8 +208,8 @@ void Cmd_Stats(const std::vector<std::string>& args)
 	SOLDIERTYPE* s = nullptr;
 	if (args.size() < 2)
 	{
-		s = GetSelectedMan();
-		if (!s) { Console_Println("No merc selected."); return; }
+		s = requireSelectedMerc();
+		if (!s) return;
 	}
 	else
 	{
@@ -298,16 +264,6 @@ void Cmd_Stats(const std::vector<std::string>& args)
 
 namespace
 {
-	bool parseInt(const std::string& s, int& out)
-	{
-		if (s.empty()) return false;
-		char* end = nullptr;
-		long v = std::strtol(s.c_str(), &end, 10);
-		if (end == s.c_str() || *end != '\0') return false;
-		out = static_cast<int>(v);
-		return true;
-	}
-
 	// Absolute (col,row) for a soldier, in the same format `move <col,row>`
 	// accepts. The relative `<dist> <dir>` after it is still useful for
 	// quick spatial framing, but the coord lets the user address the tile
@@ -1093,12 +1049,8 @@ namespace
 
 void Cmd_Nearby(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const observer = GetSelectedMan();
-	if (!observer)
-	{
-		Console_Println("No merc selected to anchor 'nearby' on.");
-		return;
-	}
+	SOLDIERTYPE* const observer = requireSelectedMerc("No merc selected to anchor 'nearby' on.");
+	if (!observer) return;
 
 	std::string filter;
 	INT16 maxDist = 0;
@@ -1306,22 +1258,6 @@ namespace
 		ST::string  desc;
 	};
 
-	INT8 parseCompassLocal(const std::string& tok)
-	{
-		std::string s;
-		s.reserve(tok.size());
-		for (char c : tok) s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-		if (s == "n"  || s == "north")     return NORTH;
-		if (s == "ne" || s == "northeast") return NORTHEAST;
-		if (s == "e"  || s == "east")      return EAST;
-		if (s == "se" || s == "southeast") return SOUTHEAST;
-		if (s == "s"  || s == "south")     return SOUTH;
-		if (s == "sw" || s == "southwest") return SOUTHWEST;
-		if (s == "w"  || s == "west")      return WEST;
-		if (s == "nw" || s == "northwest") return NORTHWEST;
-		return -1;
-	}
-
 	ST::string describeDoor(STRUCTURE& s, INT16 g)
 	{
 		const DOOR_STATUS* const ds = GetDoorStatus(g);
@@ -1525,12 +1461,8 @@ namespace
 
 void Cmd_Look(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const observer = GetSelectedMan();
-	if (!observer)
-	{
-		Console_Println("No merc selected to anchor 'look' on.");
-		return;
-	}
+	SOLDIERTYPE* const observer = requireSelectedMerc("No merc selected to anchor 'look' on.");
+	if (!observer) return;
 
 	// Default scan range. Most sectors are 80 tiles wide playable, so 60
 	// is "more than half a sector" — far enough to be useful, short
@@ -1553,7 +1485,7 @@ void Cmd_Look(const std::vector<std::string>& args)
 		return;
 	}
 
-	const INT8 dir = parseCompassLocal(args[1]);
+	const INT8 dir = parseCompass(args[1]);
 	if (dir < 0)
 	{
 		Console_Println(ST::format(
@@ -1665,8 +1597,8 @@ void Cmd_Tile(const std::vector<std::string>& args)
 
 void Cmd_Cth(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 	if (args.size() < 2)
 	{
 		Console_Println("usage: cth <target>");
@@ -1747,8 +1679,8 @@ static void RunCoverScan(SOLDIERTYPE& sel, int radius);
 
 void Cmd_Cover(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const sel = GetSelectedMan();
-	if (!sel) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
 
 	// `cover scan [N]` runs the radius scan; everything else is a single-tile
 	// query (defaulting to "here" if no target).
@@ -2066,8 +1998,8 @@ void Cmd_Inventory(const std::vector<std::string>& args)
 	SOLDIERTYPE* s = nullptr;
 	if (args.size() < 2)
 	{
-		s = GetSelectedMan();
-		if (!s) { Console_Println("No merc selected."); return; }
+		s = requireSelectedMerc();
+		if (!s) return;
 	}
 	else
 	{
@@ -2390,8 +2322,8 @@ namespace
 
 void Cmd_Examine(const std::vector<std::string>& args)
 {
-	SOLDIERTYPE* const s = GetSelectedMan();
-	if (!s) { Console_Println("No merc selected."); return; }
+	SOLDIERTYPE* const s = requireSelectedMerc();
+	if (!s) return;
 	if (args.size() < 2)
 	{
 		Console_Println("usage: examine <slot>  (slot is s1..s19; see 'inventory')");

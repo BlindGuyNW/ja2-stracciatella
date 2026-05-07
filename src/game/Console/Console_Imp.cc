@@ -19,6 +19,7 @@
 #include "Text_Input.h"
 
 #include "Console.h"
+#include "Console_Address.h"
 
 #include <cctype>
 #include <cstddef>
@@ -62,16 +63,6 @@ namespace
 
 	// ----- Argument parsing --------------------------------------------
 
-	bool parseInt(const std::string& s, INT32& out)
-	{
-		if (s.empty()) return false;
-		char* end = nullptr;
-		long v = std::strtol(s.c_str(), &end, 10);
-		if (end == s.c_str() || *end != '\0') return false;
-		out = static_cast<INT32>(v);
-		return true;
-	}
-
 	// Accepts +N, -N, or N. Used by `imp stat <name> <±delta>`.
 	bool parseDelta(const std::string& s, INT32& out)
 	{
@@ -83,12 +74,6 @@ namespace
 		if (end == p || *end != '\0') return false;
 		out = static_cast<INT32>(v);
 		return true;
-	}
-
-	std::string lower(std::string s)
-	{
-		for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-		return s;
 	}
 
 	// Case-insensitive prefix match against a sequence of labels. Used by
@@ -182,7 +167,7 @@ namespace
 		}
 	}
 
-	void cmdSummary()
+	void cmdSummary(const std::vector<std::string>&)
 	{
 		Console_Println(ST::format("page: {} (id {})", pageName(iCurrentImpPage), iCurrentImpPage));
 		Console_Println(ST::format("profile mode: {} ({})",
@@ -318,7 +303,7 @@ namespace
 		return gImpText->at(record, 0);
 	}
 
-	void cmdQuestion()
+	void cmdQuestion(const std::vector<std::string>&)
 	{
 		if (!pageGate(IMP_PERSONALITY_QUIZ, "personality quiz")) return;
 
@@ -357,7 +342,7 @@ namespace
 		Console_Println(ST::format("selected answer {}", n));
 	}
 
-	void cmdConfirm()
+	void cmdConfirm(const std::vector<std::string>&)
 	{
 		if (!pageGate(IMP_PERSONALITY_QUIZ, "personality quiz")) return;
 		if (iCurrentAnswer < 0)
@@ -370,14 +355,14 @@ namespace
 			giCurrentPersonalityQuizQuestion + 1));
 	}
 
-	void cmdPrev()
+	void cmdPrev(const std::vector<std::string>&)
 	{
 		if (!pageGate(IMP_PERSONALITY_QUIZ, "personality quiz")) return;
 		IMP_Quiz_PrevQuestion();
 		Console_Println(ST::format("now on question {}/16", giCurrentPersonalityQuizQuestion + 1));
 	}
 
-	void cmdNext()
+	void cmdNext(const std::vector<std::string>&)
 	{
 		if (!pageGate(IMP_PERSONALITY_QUIZ, "personality quiz")) return;
 		IMP_Quiz_NextQuestion();
@@ -386,7 +371,7 @@ namespace
 
 	// ----- imp traits / trait ------------------------------------------
 
-	void cmdTraits()
+	void cmdTraits(const std::vector<std::string>&)
 	{
 		if (!pageGate(IMP_SKILLTRAITS, "skill traits")) return;
 		INT32 onCount = 0;
@@ -568,7 +553,7 @@ namespace
 	// Scan ButtonList for a visible enabled button whose codepoints match
 	// `label`. If exactly one matches, click it; otherwise refuse with a
 	// helpful message instead of guessing.
-	void cmdDone()
+	void cmdDone(const std::vector<std::string>&)
 	{
 		const ST::string* label = doneLabelForCurrentPage();
 		if (!label)
@@ -612,7 +597,7 @@ namespace
 
 	// ----- imp hire -----------------------------------------------------
 
-	void cmdHire()
+	void cmdHire(const std::vector<std::string>&)
 	{
 		if (!pageGate(IMP_CONFIRM, "confirm hire")) return;
 		if (LaptopSaveInfo.fIMPCompletedFlag)
@@ -638,37 +623,55 @@ namespace
 	}
 }
 
+namespace
+{
+	// Thin wrappers so cmdName's bound (fieldId, label) pair can sit in the
+	// uniform-signature dispatch table alongside its peers.
+	void cmdNameMain    (const std::vector<std::string>& args) { cmdName(args, 0, "name"); }
+	void cmdNicknameMain(const std::vector<std::string>& args) { cmdName(args, 1, "nickname"); }
+
+	struct ImpSub
+	{
+		const char* name;
+		void      (*fn)(const std::vector<std::string>&);
+	};
+
+	// Grouped by IMP-flow phase so the unknown-subcommand list reads in
+	// the order a user would walk the wizard:
+	const ImpSub kImpSubs[] =
+	{
+		{ "goto",     &cmdGoto         },
+		{ "gender",   &cmdGender       },
+		{ "name",     &cmdNameMain     },
+		{ "nickname", &cmdNicknameMain },
+		{ "question", &cmdQuestion     },
+		{ "answer",   &cmdAnswer       },
+		{ "confirm",  &cmdConfirm      },
+		{ "prev",     &cmdPrev         },
+		{ "next",     &cmdNext         },
+		{ "traits",   &cmdTraits       },
+		{ "trait",    &cmdTrait        },
+		{ "stats",    &cmdStats        },
+		{ "stat",     &cmdStat         },
+		{ "portrait", &cmdPortrait     },
+		{ "voice",    &cmdVoice        },
+		{ "hire",     &cmdHire         },
+		{ "done",     &cmdDone         },
+	};
+}
+
 void Cmd_Imp(const std::vector<std::string>& args)
 {
 	if (!laptopGate()) return;
 
 	// `imp` bare — orientation readout.
-	if (args.size() < 2) { cmdSummary(); return; }
+	if (args.size() < 2) { cmdSummary(args); return; }
 
 	const std::string& sub = args[1];
-
-	if (sub == "goto")     { cmdGoto(args);     return; }
-	if (sub == "gender")   { cmdGender(args);   return; }
-	if (sub == "name")     { cmdName(args, 0, "name");     return; }
-	if (sub == "nickname") { cmdName(args, 1, "nickname"); return; }
-
-	if (sub == "question") { cmdQuestion();     return; }
-	if (sub == "answer")   { cmdAnswer(args);   return; }
-	if (sub == "confirm")  { cmdConfirm();      return; }
-	if (sub == "prev")     { cmdPrev();         return; }
-	if (sub == "next")     { cmdNext();         return; }
-
-	if (sub == "traits")   { cmdTraits();       return; }
-	if (sub == "trait")    { cmdTrait(args);    return; }
-
-	if (sub == "stats")    { cmdStats(args);     return; }
-	if (sub == "stat")     { cmdStat(args);     return; }
-
-	if (sub == "portrait") { cmdPortrait(args); return; }
-	if (sub == "voice")    { cmdVoice(args);    return; }
-
-	if (sub == "hire")     { cmdHire();         return; }
-	if (sub == "done")     { cmdDone();         return; }
+	for (const auto& e : kImpSubs)
+	{
+		if (sub == e.name) { e.fn(args); return; }
+	}
 
 	// Fallthrough: accept `imp <pagename>` as a shortcut for
 	// `imp goto <pagename>`. Saves the user from `imp begin` /
@@ -685,10 +688,13 @@ void Cmd_Imp(const std::vector<std::string>& args)
 		}
 	}
 
+	std::string list;
+	for (const auto& e : kImpSubs)
+	{
+		if (!list.empty()) list += ", ";
+		list += e.name;
+	}
 	Console_Println(ST::format(
-		"unknown subcommand: imp {} (try 'imp', 'imp goto …', "
-		"'imp name/nickname/gender', 'imp question/answer/confirm/prev/next', "
-		"'imp traits/trait', 'imp stats/stat', 'imp portrait/voice', "
-		"'imp done', 'imp hire')",
-		sub));
+		"unknown subcommand: imp {} (try 'imp' alone, or one of: {})",
+		sub, list));
 }

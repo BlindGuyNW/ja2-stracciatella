@@ -2,6 +2,7 @@
 #include "Console_Tags.h"
 #include "Console_Visibility.h"
 
+#include "Console.h"
 #include "Isometric_Utils.h"
 #include "Overhead.h"
 #include "Overhead_Types.h"
@@ -16,46 +17,66 @@
 #include <string>
 #include <string_theory/format>
 
+// startsWithCI / parseCompass / parseInt live in Console_Address.h
+// so every verb file can call them without redeclaring the same body.
+
+bool startsWithCI(const ST::string& haystack, const std::string& needle)
+{
+	if (needle.size() > haystack.size()) return false;
+	for (std::size_t i = 0; i < needle.size(); ++i)
+	{
+		const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(haystack.c_str()[i])));
+		const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(needle[i])));
+		if (a != b) return false;
+	}
+	return true;
+}
+
+INT8 parseCompass(const std::string& tok)
+{
+	std::string s;
+	s.reserve(tok.size());
+	for (char c : tok) s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+	if (s == "n"  || s == "north")     return NORTH;
+	if (s == "ne" || s == "northeast") return NORTHEAST;
+	if (s == "e"  || s == "east")      return EAST;
+	if (s == "se" || s == "southeast") return SOUTHEAST;
+	if (s == "s"  || s == "south")     return SOUTH;
+	if (s == "sw" || s == "southwest") return SOUTHWEST;
+	if (s == "w"  || s == "west")      return WEST;
+	if (s == "nw" || s == "northwest") return NORTHWEST;
+	return -1;
+}
+
+SOLDIERTYPE* findTeammateByName(const std::string& needle, ST::string& errorOut)
+{
+	SOLDIERTYPE* match = nullptr;
+	int matchCount = 0;
+	FOR_EACH_MERC(it)
+	{
+		SOLDIERTYPE* const s = *it;
+		if (s->bTeam != OUR_TEAM) continue;
+		if (!s->bActive)          continue;
+		if (s->bLife <= 0)        continue;
+		if (!s->bInSector)        continue;
+		if (!startsWithCI(s->name, needle)) continue;
+		match = s;
+		++matchCount;
+	}
+	if (matchCount == 0) { errorOut = ST::format("no teammate matches '{}'", needle); return nullptr; }
+	if (matchCount > 1)  { errorOut = ST::format("'{}' is ambiguous; use a longer prefix", needle); return nullptr; }
+	return match;
+}
+
+SOLDIERTYPE* requireSelectedMerc(const char* msg)
+{
+	SOLDIERTYPE* const s = GetSelectedMan();
+	if (!s) Console_Println(msg);
+	return s;
+}
+
 namespace
 {
-	bool startsWithCI(const ST::string& haystack, const std::string& needle)
-	{
-		if (needle.size() > haystack.size()) return false;
-		for (std::size_t i = 0; i < needle.size(); ++i)
-		{
-			const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(haystack.c_str()[i])));
-			const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(needle[i])));
-			if (a != b) return false;
-		}
-		return true;
-	}
-
-	INT8 parseCompass(const std::string& tok)
-	{
-		std::string s;
-		s.reserve(tok.size());
-		for (char c : tok) s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-		if (s == "n"  || s == "north")     return NORTH;
-		if (s == "ne" || s == "northeast") return NORTHEAST;
-		if (s == "e"  || s == "east")      return EAST;
-		if (s == "se" || s == "southeast") return SOUTHEAST;
-		if (s == "s"  || s == "south")     return SOUTH;
-		if (s == "sw" || s == "southwest") return SOUTHWEST;
-		if (s == "w"  || s == "west")      return WEST;
-		if (s == "nw" || s == "northwest") return NORTHWEST;
-		return -1;
-	}
-
-	bool parseInt(const std::string& s, int& out)
-	{
-		if (s.empty()) return false;
-		char* end = nullptr;
-		long v = std::strtol(s.c_str(), &end, 10);
-		if (end == s.c_str() || *end != '\0') return false;
-		out = static_cast<int>(v);
-		return true;
-	}
-
 	bool parseCoord(const std::string& tok, INT16& gridnoOut)
 	{
 		const auto comma = tok.find(',');

@@ -4,7 +4,9 @@
 #include "JA2Types.h"
 #include "Types.h"
 
+#include <cctype>
 #include <cstddef>
+#include <cstdlib>
 #include <string>
 #include <string_theory/string>
 #include <vector>
@@ -95,5 +97,61 @@ const char* slotLabel(INT8 invPos);
 
 /** The canonical inventory iteration order matching s1..s19. */
 extern const INT8 kSlotOrder[kSlotTagCount];
+
+/* Small string / parsing utilities shared by every console verb file.
+ * Defined here (header / .cc) instead of duplicated per file in
+ * unnamed namespaces. */
+
+/** Case-insensitive prefix match: true if `needle` is a prefix of
+ *  `haystack` ignoring ASCII case. */
+bool startsWithCI(const ST::string& haystack, const std::string& needle);
+
+/** Lowercase ASCII copy. Non-ASCII bytes are passed through unchanged. */
+inline std::string lower(std::string s)
+{
+	for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	return s;
+}
+
+/** Parse a decimal integer that consumes the entire string. Returns
+ *  false on empty input, leading/trailing junk, or pure overflow of
+ *  long; on success writes the value into `out` (with the same
+ *  static_cast-truncation each verb file used to do by hand). The
+ *  template lets each call site declare `int` / `long` / `INT32` to
+ *  match the field it's writing into. */
+template <typename T>
+bool parseInt(const std::string& s, T& out)
+{
+	if (s.empty()) return false;
+	char* end = nullptr;
+	long v = std::strtol(s.c_str(), &end, 10);
+	if (end == s.c_str() || *end != '\0') return false;
+	out = static_cast<T>(v);
+	return true;
+}
+
+/** Parse a compass word — "n"/"north", "ne"/"northeast", ..., "nw"/
+ *  "northwest". Case-insensitive. Returns the matching direction enum
+ *  (NORTH..NORTHWEST) or -1 if the token isn't a compass word. */
+INT8 parseCompass(const std::string& tok);
+
+/** Find a single own-team merc by case-insensitive name prefix.
+ *  Skips inactive / dead / out-of-sector mercs so console commands
+ *  don't accidentally address someone who isn't on the board. On
+ *  ambiguity or no match, returns nullptr and writes a one-line
+ *  reason into `errorOut`. */
+SOLDIERTYPE* findTeammateByName(const std::string& needle, ST::string& errorOut);
+
+/** Verb prologue: returns the currently selected merc, or nullptr after
+ *  printing `msg` to the console. The default message matches the
+ *  bare-bones "No merc selected." line every action verb shares; pass a
+ *  more specific message when the verb's context warrants one (e.g.
+ *  "No merc selected to anchor 'nearby' on."). Use as:
+ *      SOLDIERTYPE* const s = requireSelectedMerc();
+ *      if (!s) return;
+ *  Callers that don't need the soldier handle can still call this for
+ *  the print-and-gate side effect; the return is intentionally not
+ *  [[nodiscard]]. */
+SOLDIERTYPE* requireSelectedMerc(const char* msg = "No merc selected.");
 
 #endif // GAME_CONSOLE_ADDRESS_H_

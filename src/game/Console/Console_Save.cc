@@ -20,6 +20,7 @@
 #include "Types.h"
 
 #include "Console.h"
+#include "Console_Address.h"
 
 #include <algorithm>
 #include <cctype>
@@ -34,13 +35,6 @@
 namespace
 {
 	// ----- text helpers ------------------------------------------------
-
-	std::string lower(std::string s)
-	{
-		for (char& c : s)
-			c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-		return s;
-	}
 
 	// Join args[from..end] with spaces, preserving original casing.
 	// Save names are case-significant on disk on most filesystems and the
