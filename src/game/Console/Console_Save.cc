@@ -8,6 +8,7 @@
 #include "Handle_UI.h"
 #include "Interface_Dialogue.h"
 #include "JAScreens.h"
+#include "MainMenuScreen.h"
 #include "Meanwhile.h"
 #include "Overhead.h"
 #include "PreBattle_Interface.h"
@@ -510,7 +511,19 @@ namespace
 		}
 
 		ScreenID const dest = guiScreenToGotoAfterLoadingSavedGame;
-		SetPendingNewScreen(dest);
+		// SetPendingNewScreen jumps `guiCurrentScreen` straight to `dest`
+		// from inside GameLoop, bypassing whatever screen we're leaving.
+		// GameLoop's per-screen deinit switch handles MAP_SCREEN and
+		// LAPTOP_SCREEN explicitly, but MAINMENU_SCREEN falls through —
+		// `ExitMainMenu()` only runs from inside `MainMenuScreenHandle()`
+		// when `gfMainMenuScreenExit` is set. Drive that flag instead so
+		// the menu's buttons and background image are torn down. Without
+		// this the menu's regions linger in tactical, showing up under
+		// `g list` and narrating on hover via FastHelp.
+		if (guiCurrentScreen == MAINMENU_SCREEN)
+			SetMainMenuExitScreen(dest);
+		else
+			SetPendingNewScreen(dest);
 		if (dest == MAP_SCREEN)
 		{
 			if (!gfPauseDueToPlayerGamePause)

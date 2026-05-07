@@ -185,9 +185,6 @@ ScreenID MainMenuScreenHandle(void)
 }
 
 
-static void SetMainMenuExitScreen(ScreenID uiNewScreen);
-
-
 static void HandleMainMenuScreen(void)
 {
 	if (gbHandledMainMenu == 0) return;
@@ -308,7 +305,7 @@ void ClearMainMenu(void)
 }
 
 
-static void SetMainMenuExitScreen(ScreenID const uiNewScreen)
+void SetMainMenuExitScreen(ScreenID const uiNewScreen)
 {
 	guiMainMenuExitScreen = uiNewScreen;
 	gfMainMenuScreenExit  = TRUE;
