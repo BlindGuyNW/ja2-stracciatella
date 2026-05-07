@@ -23,9 +23,11 @@
 #include "MagazineModel.h"
 #include "Map_Edgepoints.h"
 #include "Map_Information.h"
+#include "GameSettings.h"
 #include "OppList.h"
 #include "Overhead.h"
 #include "Overhead_Types.h"
+#include "PathAI.h"
 #include "Render_Fun.h"
 #include "Soldier_Control.h"
 #include "Soldier_Macros.h"
@@ -1608,10 +1610,39 @@ namespace
 	}
 }
 
+namespace
+{
+	struct ScanCandidate
+	{
+		INT16 gridno;
+		INT16 dist;
+		UINT8 dir;
+		INT8  cover;
+		INT16 apCost;
+	};
+}
+
+static void RunCoverScan(SOLDIERTYPE& sel, int radius);
+
 void Cmd_Cover(const std::vector<std::string>& args)
 {
 	SOLDIERTYPE* const sel = GetSelectedMan();
 	if (!sel) { Console_Println("No merc selected."); return; }
+
+	// `cover scan [N]` runs the radius scan; everything else is a single-tile
+	// query (defaulting to "here" if no target).
+	if (args.size() >= 2 && args[1] == "scan")
+	{
+		int radius = gGameSettings.ubSizeOfDisplayCover;
+		if (args.size() >= 3 && !parseInt(args[2], radius))
+		{
+			Console_Println(ST::format("cover scan: bad radius '{}'", args[2]));
+			return;
+		}
+		radius = std::clamp(radius, 4, 11);
+		RunCoverScan(*sel, radius);
+		return;
+	}
 
 	INT16      gridno = sel->sGridNo;
 	ST::string label  = ST::string("here");
@@ -1628,14 +1659,155 @@ void Cmd_Cover(const std::vector<std::string>& args)
 			: ST::format("{} tiles {}", dist, directionWord(dir));
 	}
 
-	// Always evaluate at the merc's current animation stance — the same
-	// "what would my cover be standing here as I am now?" question the
-	// hold-DELETE overlay answers when you cursor onto a tile.
-	const INT8 stance = GetStance(*sel);
-	const INT8 cover  = CalcCoverForGridNoBasedOnTeamKnownEnemies(sel, gridno, stance);
+	// Report all three stances at once. The overlay only shows the merc's
+	// current stance; toggling stance to compare requires repainting. One
+	// line lets the SR user compare without re-querying.
+	const INT8 stand  = CalcCoverForGridNoBasedOnTeamKnownEnemies(sel, gridno, ANIM_STAND);
+	const INT8 crouch = CalcCoverForGridNoBasedOnTeamKnownEnemies(sel, gridno, ANIM_CROUCH);
+	const INT8 prone  = CalcCoverForGridNoBasedOnTeamKnownEnemies(sel, gridno, ANIM_PRONE);
 
-	Console_Println(ST::format("Cover at {} ({}): {}.",
-	                           label, stanceWord(*sel), coverBucket(cover)));
+	Console_Println(ST::format("Cover at {}: standing {}, crouched {}, prone {}.",
+	                           label,
+	                           coverBucket(stand),
+	                           coverBucket(crouch),
+	                           coverBucket(prone)));
+}
+
+static void RunCoverScan(SOLDIERTYPE& sel, int radius)
+{
+	// Mirror DisplayCover.cc's overlay: paint cover only on tiles you can
+	// actually walk to. LocalReachableTest sets MAPELEMENT_REACHABLE on
+	// every tile within `radius` that has a foot path from the merc.
+	LocalReachableTest(sel.sGridNo, static_cast<INT8>(radius));
+
+	const INT16 maxLeft  = std::min<INT16>(radius,                  sel.sGridNo % MAXCOL);
+	const INT16 maxRight = std::min<INT16>(radius, MAXCOL - 1     - sel.sGridNo % MAXCOL);
+	const INT16 maxUp    = std::min<INT16>(radius,                  sel.sGridNo / MAXROW);
+	const INT16 maxDown  = std::min<INT16>(radius, MAXROW - 1     - sel.sGridNo / MAXROW);
+
+	const INT8 stance = GetStance(sel);
+
+	std::vector<ScanCandidate> cands;
+	cands.reserve(static_cast<size_t>((maxLeft + maxRight + 1) * (maxUp + maxDown + 1)));
+
+	int bucketCounts[5] = { 0, 0, 0, 0, 0 }; // exposed, weak, partial, good, safe
+	int exposedByDir[NUM_WORLD_DIRECTIONS] = { 0 };
+
+	for (INT16 dy = -maxUp; dy <= maxDown; ++dy)
+	{
+		for (INT16 dx = -maxLeft; dx <= maxRight; ++dx)
+		{
+			const INT16 gridno = sel.sGridNo + dx + (MAXCOL * dy);
+			if (gridno == sel.sGridNo) continue;
+			if (!(gpWorldLevelData[gridno].uiFlags & MAPELEMENT_REACHABLE)) continue;
+
+			// Skip tiles a visible enemy is standing on — you can't move
+			// onto them. Mirrors DisplayCover.cc's WhoIsThere2 filter.
+			SOLDIERTYPE const* occupant = WhoIsThere2(gridno, sel.bLevel);
+			if (occupant && occupant->bVisible == TRUE && occupant->bTeam != sel.bTeam) continue;
+
+			const INT8 cover = CalcCoverForGridNoBasedOnTeamKnownEnemies(&sel, gridno, stance);
+
+			int bucket;
+			if      (cover <= 20) bucket = 0;
+			else if (cover <= 40) bucket = 1;
+			else if (cover <= 60) bucket = 2;
+			else if (cover <= 80) bucket = 3;
+			else                  bucket = 4;
+			++bucketCounts[bucket];
+
+			ScanCandidate c;
+			c.gridno = gridno;
+			c.dist   = SpacesAway(sel.sGridNo, gridno);
+			c.dir    = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(sel.sGridNo, gridno));
+			c.cover  = cover;
+			c.apCost = PlotPath(&sel, gridno, NO_COPYROUTE, FALSE, WALKING, 0);
+
+			if (bucket == 0 && c.dir < NUM_WORLD_DIRECTIONS) ++exposedByDir[c.dir];
+
+			cands.push_back(c);
+		}
+	}
+
+	const int total = bucketCounts[0] + bucketCounts[1] + bucketCounts[2] + bucketCounts[3] + bucketCounts[4];
+	if (total == 0)
+	{
+		Console_Println(ST::format("Cover scan within {}: no reachable tiles.", radius));
+		return;
+	}
+
+	Console_Println(ST::format(
+		"Cover scan within {} (stance {}): {} reachable — {} safe, {} good, {} partial, {} weak, {} exposed.",
+		radius, stanceWord(sel), total,
+		bucketCounts[4], bucketCounts[3], bucketCounts[2], bucketCounts[1], bucketCounts[0]));
+
+	const INT8 hereCover = CalcCoverForGridNoBasedOnTeamKnownEnemies(&sel, sel.sGridNo, stance);
+	int hereBucket;
+	if      (hereCover <= 20) hereBucket = 0;
+	else if (hereCover <= 40) hereBucket = 1;
+	else if (hereCover <= 60) hereBucket = 2;
+	else if (hereCover <= 80) hereBucket = 3;
+	else                      hereBucket = 4;
+
+	Console_Println(ST::format("Here: {}.", coverBucket(hereCover)));
+
+	// "Better moves" = strictly higher bucket than where we stand. Sort by
+	// (cover desc, AP cost asc) so the cheapest top-cover options surface.
+	std::vector<ScanCandidate> better;
+	better.reserve(cands.size());
+	for (auto const& c : cands)
+	{
+		int b;
+		if      (c.cover <= 20) b = 0;
+		else if (c.cover <= 40) b = 1;
+		else if (c.cover <= 60) b = 2;
+		else if (c.cover <= 80) b = 3;
+		else                    b = 4;
+		if (b > hereBucket) better.push_back(c);
+	}
+	std::sort(better.begin(), better.end(),
+		[](ScanCandidate const& a, ScanCandidate const& b) {
+			if (a.cover != b.cover) return a.cover > b.cover;
+			return a.apCost < b.apCost;
+		});
+
+	if (better.empty())
+	{
+		Console_Println("No reachable tile improves it.");
+	}
+	else
+	{
+		Console_Println("Better moves:");
+		const std::size_t cap = std::min<std::size_t>(better.size(), 3);
+		for (std::size_t i = 0; i < cap; ++i)
+		{
+			ScanCandidate const& c = better[i];
+			const ST::string overBudget = (c.apCost > sel.bActionPoints)
+				? ST::string(", over budget") : ST::string();
+			Console_Println(ST::format("  {} {}: {}, {} AP{}",
+				c.dist, directionWord(c.dir), coverBucket(c.cover), c.apCost, overBudget));
+		}
+		if (better.size() > cap)
+		{
+			Console_Println(ST::format("  (+{} more)", better.size() - cap));
+		}
+	}
+
+	// Inverse view: only useful when you're not already exposed (in which
+	// case "exposed within N" is most of the field anyway).
+	if (hereBucket > 0 && bucketCounts[0] > 0)
+	{
+		ST::string parts;
+		const UINT8 order[8] = { NORTH, NORTHEAST, EAST, SOUTHEAST,
+		                        SOUTH, SOUTHWEST, WEST, NORTHWEST };
+		for (UINT8 d : order)
+		{
+			if (exposedByDir[d] == 0) continue;
+			if (!parts.empty()) parts += ", ";
+			parts += ST::format("{} {}", exposedByDir[d], directionWord(d));
+		}
+		Console_Println(ST::format("Exposed within {}: {}.", radius, parts));
+	}
 }
 
 namespace

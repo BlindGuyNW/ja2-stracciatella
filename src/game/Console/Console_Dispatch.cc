@@ -45,7 +45,7 @@ namespace
 		{ "look",      &Cmd_Look,       "look [<dir> [N]] — scan a direction (or all 4 cardinals)" },
 		{ "tile",      &Cmd_Tile,       "tile <target> — terrain and occupant"                   },
 		{ "cth",       &Cmd_Cth,        "cth <target> — chance-to-hit at aim 0..4"               },
-		{ "cover",     &Cmd_Cover,      "cover [target] — cover at a tile vs known enemies"      },
+		{ "cover",     &Cmd_Cover,      "cover [target] — per-stance cover at a tile; 'cover scan [N]' for the radius field" },
 		{ "inventory",  &Cmd_Inventory,  "inventory [name] — slots, ammo, and reload sources"      },
 		{ "examine",    &Cmd_Examine,    "examine <slot> — describe an inventory item (s1..s19)"   },
 		{ "path",       &Cmd_Path,       "path <target> — route AP cost from selected"            },
