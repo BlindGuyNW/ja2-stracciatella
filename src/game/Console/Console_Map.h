@@ -11,10 +11,12 @@
  * `map` covers the strategic grid — sectors, towns, mines, militia, intel,
  * Z-level, movement plotting, and path cancellation.
  *
- * Bottom-strip verbs (`compress`, `tactical`, `quit`, `log`) sit at top
- * level rather than inside `map` — they're rare-use one-shots. The design
- * spec is docs/mapscreen.md. Assignment / contract / sort / heli /
- * redistribute land in later passes. */
+ * Top-level rare-use one-shots (`compress`, `tactical`, `log`, `quit`)
+ * sit alongside the families rather than inside `map`. `compress`,
+ * `tactical`, and `log` map to the mapscreen bottom strip; `quit` is
+ * application exit (peer of `save` / `load`, not the in-game options
+ * screen). The design spec is docs/mapscreen.md. Assignment / contract /
+ * sort / heli / redistribute land in later passes. */
 
 void Cmd_Team    (const std::vector<std::string>& args);
 void Cmd_Map     (const std::vector<std::string>& args);

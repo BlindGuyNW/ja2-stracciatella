@@ -33,6 +33,7 @@
 #include "Types.h"
 
 #include "Console.h"
+#include "SGP.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1408,7 +1409,7 @@ namespace
 	}
 
 	// ============================================================
-	//   `compress` / `tactical` / `quit` / `log`
+	//   `compress` / `tactical` / `log` / `quit`
 	// ============================================================
 
 	void cmdCompress(const std::vector<std::string>& args)
@@ -1496,23 +1497,13 @@ namespace
 
 	void cmdQuit()
 	{
-		// `quit` opens the options screen (Save / Load / Quit live there).
-		// We stop short of actually quitting — the user makes the final
-		// decision through the options panel, where `g click` can hit the
-		// Quit button.
-		if (guiCurrentScreen == MAP_SCREEN)
-		{
-			if (!AllowedToExitFromMapscreenTo(MAP_EXIT_TO_OPTIONS))
-			{
-				Console_Println("Can't open the options screen right now.");
-				return;
-			}
-			RequestTriggerExitFromMapscreen(MAP_EXIT_TO_OPTIONS);
-			Console_Println("Opening options screen (Save / Load / Quit).");
-			return;
-		}
-		Console_Println(
-			"Open the options screen via the mapscreen — switch with 'team' or 'map' first.");
+		// Exit the application — same path the OS window's close button
+		// takes. requestGameExit posts SDL_QUIT, which the main loop
+		// catches and routes through deinitGameAndExit (the Dead-is-Dead
+		// auto-save and engine teardown live there). No confirm: the user
+		// typed the verb, that is the confirmation.
+		Console_Println("Exiting.");
+		requestGameExit();
 	}
 
 	void cmdLog(const std::vector<std::string>& args)

@@ -80,7 +80,7 @@ namespace
 		{ "map",       &Cmd_Map,        "map | map sector <id> | map list <towns|mines|sams|militia|enemies> | map town <name> | map mine <town> | map level <0..3> | map move <sector> [from <name>] [keep-path] | map cancel [<name>]" },
 		{ "laptop",    &Cmd_Laptop,     "laptop — open the laptop screen"                        },
 		{ "tactical",  &Cmd_Tactical,   "tactical — switch to the tactical screen"               },
-		{ "quit",      &Cmd_Quit,       "quit — open the options screen (Save / Load / Quit)"    },
+		{ "quit",      &Cmd_Quit,       "quit — exit the application"                            },
 		{ "save",      &Cmd_Save,       "save | save list | save <name> | save overwrite <name|sN> | save quick | save delete <name|sN>" },
 		{ "load",      &Cmd_Load,       "load | load <name|sN> | load quick — list saves or load by slot/name" },
 		{ "compress",  &Cmd_Compress,   "compress <off|x1|fast|faster|fastest> — time compression" },
