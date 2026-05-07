@@ -1,5 +1,6 @@
 #include "Console_Query.h"
 #include "Console_Address.h"
+#include "Console_Tags.h"
 #include "Console_Visibility.h"
 
 #include "Console.h"
@@ -725,14 +726,14 @@ namespace
 		                  directionWord(e.side), dest);
 	}
 
-	// One entry per compass direction the observer can look. count is the
-	// number of unrevealed playable tiles in that direction; closestGridno
-	// is the nearest of them, addressable directly via `move <col,row>`.
+	// Per-direction accumulator while scanning. count is the number of
+	// unrevealed playable tiles in that direction; gridno is the nearest
+	// of them, addressable directly via `move <col,row>`.
 	struct Frontier
 	{
 		bool  present;
-		INT16 closestGridno;
-		INT16 closestDist;
+		INT16 gridno;
+		INT16 distance;
 		INT32 count;
 	};
 
@@ -778,22 +779,52 @@ namespace
 
 			const INT16 dist = SpacesAway(origin, g);
 			Frontier& f = out.byDir[dir];
-			if (!f.present || dist < f.closestDist)
+			if (!f.present || dist < f.distance)
 			{
-				f.present       = true;
-				f.closestGridno = g;
-				f.closestDist   = dist;
+				f.present  = true;
+				f.gridno   = g;
+				f.distance = dist;
 			}
 			++f.count;
 		}
 	}
 
-	ST::string formatFrontierLine(std::size_t tagN, UINT8 dir, const Frontier& f)
+	// One row per compass direction with at least one unexplored tile,
+	// flattened from UnexploredSummary so it has the same shape as every
+	// other Listed* category (distance, gridno, plus per-category extras).
+	// Sorted by ascending distance, ties broken by direction ordinal so
+	// the result is deterministic between calls — the `u<N>` tag relies on
+	// this matching the order Cmd_Nearby printed.
+	struct ListedFrontier
 	{
-		const INT16 col = f.closestGridno % WORLD_COLS;
-		const INT16 row = f.closestGridno / WORLD_COLS;
+		INT16 distance;
+		INT16 gridno;
+		INT32 count;
+		UINT8 dir;
+	};
+
+	void enumerateFrontiers(const UnexploredSummary& u, std::vector<ListedFrontier>& out)
+	{
+		for (UINT8 d = 0; d < NUM_WORLD_DIRECTIONS; ++d)
+		{
+			const Frontier& f = u.byDir[d];
+			if (!f.present) continue;
+			out.push_back({ f.distance, f.gridno, f.count, d });
+		}
+		std::sort(out.begin(), out.end(),
+			[](const ListedFrontier& a, const ListedFrontier& b)
+			{
+				if (a.distance != b.distance) return a.distance < b.distance;
+				return a.dir < b.dir;
+			});
+	}
+
+	ST::string formatFrontierLine(const ListedFrontier& f, std::size_t tagN, const SOLDIERTYPE& /*observer*/)
+	{
+		const INT16 col = f.gridno % WORLD_COLS;
+		const INT16 row = f.gridno / WORLD_COLS;
 		return ST::format("  u{} {} tiles {}: nearest at ({},{}), {} tiles unseen this way",
-		                  tagN, f.closestDist, directionWord(dir), col, row, f.count);
+		                  tagN, f.distance, directionWord(f.dir), col, row, f.count);
 	}
 
 	// Hazard label priority: most-dangerous wins when a tile carries
@@ -820,7 +851,7 @@ namespace
 	struct ListedHazard
 	{
 		INT16       distance;       // to closest tile in cluster
-		INT16       closestGridno;
+		INT16       gridno;         // closest cluster tile (the tag's target)
 		INT16       tileCount;
 		const char* label;
 	};
@@ -879,7 +910,7 @@ namespace
 
 			ListedHazard h{};
 			h.distance      = closestDist;
-			h.closestGridno = closestG;
+			h.gridno = closestG;
 			h.tileCount     = static_cast<INT16>(count);
 			h.label         = hazardLabel(clusterTypes);
 			if (h.label) out.push_back(h);
@@ -889,13 +920,13 @@ namespace
 			[](const ListedHazard& a, const ListedHazard& b)
 			{
 				if (a.distance != b.distance) return a.distance < b.distance;
-				return a.closestGridno < b.closestGridno;
+				return a.gridno < b.gridno;
 			});
 	}
 
 	ST::string formatHazardLine(const ListedHazard& h, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, h.closestGridno));
+		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, h.gridno));
 		if (h.tileCount <= 1)
 		{
 			return ST::format("  z{} {} tiles {}: {}",
@@ -1025,6 +1056,39 @@ namespace
 		                  itemName(b.itemId), mode,
 		                  roomSuffix(observer, b.gridno));
 	}
+
+	// Generic "Heading (N):" / distance-filtered list / "(none)" block
+	// shared by every category whose enumerator yields a vector<T> sorted
+	// by ascending T::distance and a per-line formatter with the standard
+	// (entry, 1-based-index, observer) signature. The `nearby` print order
+	// must match the order ConsoleTags::resolve indexes by — both call
+	// sites route through this helper (or its frontiers analogue) so the
+	// ordering invariant lives in one place.
+	template <typename T>
+	void printNearbyCategory(
+		const SOLDIERTYPE& observer,
+		INT16              maxDist,
+		const char*        heading,
+		void               (*enumerate)(const SOLDIERTYPE&, std::vector<T>&),
+		ST::string         (*formatLine)(const T&, std::size_t, const SOLDIERTYPE&))
+	{
+		std::vector<T> list;
+		enumerate(observer, list);
+		Console_Println(ST::format("{} ({}):", heading, list.size()));
+		// Indices stay aligned with the address parser even when a
+		// distance cap is in effect: enumerate the full distance-sorted
+		// list, then only print entries within the cap. So 'fire e3'
+		// resolves to the third hostile overall, regardless of what the
+		// user filtered out.
+		std::size_t shown = 0;
+		for (std::size_t i = 0; i < list.size(); ++i)
+		{
+			if (maxDist > 0 && list[i].distance > maxDist) continue;
+			Console_Println(formatLine(list[i], i + 1, observer));
+			++shown;
+		}
+		if (shown == 0) Console_Println("  (none)");
+	}
 }
 
 void Cmd_Nearby(const std::vector<std::string>& args)
@@ -1078,152 +1142,23 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 		return;
 	}
 
-	// Indices stay aligned with the address parser even when a distance
-	// cap is in effect: enumerate the full distance-sorted list, then
-	// only print entries within the cap. So 'fire e3' resolves to the
-	// third hostile overall, regardless of what the user filtered out.
-	if (wantEnemies)
-	{
-		std::vector<ListedSoldier> hostiles;
-		enumerateHostiles(*observer, hostiles);
-		Console_Println(ST::format("Visible hostiles ({}):", hostiles.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < hostiles.size(); ++i)
-		{
-			if (maxDist > 0 && hostiles[i].distance > maxDist) continue;
-			Console_Println(formatHostileLine(hostiles[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
-	if (wantMercs)
-	{
-		std::vector<ListedSoldier> friends;
-		enumerateTeammates(*observer, friends);
-		Console_Println(ST::format("Teammates ({}):", friends.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < friends.size(); ++i)
-		{
-			if (maxDist > 0 && friends[i].distance > maxDist) continue;
-			Console_Println(formatFriendlyLine(friends[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
-	if (wantItems)
-	{
-		std::vector<ItemPile> piles;
-		enumerateVisibleItems(*observer, piles);
-		Console_Println(ST::format("Item piles ({}):", piles.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < piles.size(); ++i)
-		{
-			if (maxDist > 0 && piles[i].distance > maxDist) continue;
-			Console_Println(formatItemPileLine(piles[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
-	if (wantDoors)
-	{
-		std::vector<ListedDoor> doors;
-		enumerateDoors(*observer, doors);
-		Console_Println(ST::format("Doors ({}):", doors.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < doors.size(); ++i)
-		{
-			if (maxDist > 0 && doors[i].distance > maxDist) continue;
-			Console_Println(formatDoorLine(doors[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
-	if (wantContainers)
-	{
-		std::vector<ListedContainer> containers;
-		enumerateContainers(*observer, containers);
-		Console_Println(ST::format("Containers ({}):", containers.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < containers.size(); ++i)
-		{
-			if (maxDist > 0 && containers[i].distance > maxDist) continue;
-			Console_Println(formatContainerLine(containers[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
-	if (wantCivilians)
-	{
-		std::vector<ListedSoldier> civs;
-		enumerateCivilians(*observer, civs);
-		Console_Println(ST::format("Civilians ({}):", civs.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < civs.size(); ++i)
-		{
-			if (maxDist > 0 && civs[i].distance > maxDist) continue;
-			Console_Println(formatCivilianLine(civs[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
-	if (wantExits)
-	{
-		std::vector<ListedExit> exits;
-		enumerateExits(*observer, exits);
-		Console_Println(ST::format("Exits ({}):", exits.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < exits.size(); ++i)
-		{
-			if (maxDist > 0 && exits[i].distance > maxDist) continue;
-			Console_Println(formatExitLine(exits[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
-	if (wantHazards)
-	{
-		std::vector<ListedHazard> hazards;
-		enumerateHazards(*observer, hazards);
-		Console_Println(ST::format("Hazards ({}):", hazards.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < hazards.size(); ++i)
-		{
-			if (maxDist > 0 && hazards[i].distance > maxDist) continue;
-			Console_Println(formatHazardLine(hazards[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
-	if (wantMines)
-	{
-		std::vector<ListedMine> mines;
-		enumerateMines(*observer, mines);
-		Console_Println(ST::format("Mines ({}):", mines.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < mines.size(); ++i)
-		{
-			if (maxDist > 0 && mines[i].distance > maxDist) continue;
-			Console_Println(formatMineLine(mines[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
-	if (wantBombs)
-	{
-		std::vector<ListedBomb> bombs;
-		enumerateBombs(*observer, bombs);
-		Console_Println(ST::format("Placed bombs ({}):", bombs.size()));
-		std::size_t shown = 0;
-		for (std::size_t i = 0; i < bombs.size(); ++i)
-		{
-			if (maxDist > 0 && bombs[i].distance > maxDist) continue;
-			Console_Println(formatBombLine(bombs[i], i + 1, *observer));
-			++shown;
-		}
-		if (shown == 0) Console_Println("  (none)");
-	}
+	if (wantEnemies)    printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Visible hostiles", enumerateHostiles,     formatHostileLine);
+	if (wantMercs)      printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Teammates",        enumerateTeammates,    formatFriendlyLine);
+	if (wantCivilians)  printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Civilians",        enumerateCivilians,    formatCivilianLine);
+	if (wantItems)      printNearbyCategory<ItemPile>       (*observer, maxDist, "Item piles",       enumerateVisibleItems, formatItemPileLine);
+	if (wantDoors)      printNearbyCategory<ListedDoor>     (*observer, maxDist, "Doors",            enumerateDoors,        formatDoorLine);
+	if (wantContainers) printNearbyCategory<ListedContainer>(*observer, maxDist, "Containers",       enumerateContainers,   formatContainerLine);
+	if (wantExits)      printNearbyCategory<ListedExit>     (*observer, maxDist, "Exits",            enumerateExits,        formatExitLine);
+	if (wantHazards)    printNearbyCategory<ListedHazard>   (*observer, maxDist, "Hazards",          enumerateHazards,      formatHazardLine);
+	if (wantMines)      printNearbyCategory<ListedMine>     (*observer, maxDist, "Mines",            enumerateMines,        formatMineLine);
+	if (wantBombs)      printNearbyCategory<ListedBomb>     (*observer, maxDist, "Placed bombs",     enumerateBombs,        formatBombLine);
 	if (wantUnexplored)
 	{
+		// Frontiers carry a preamble (% explored) and a fully-explored
+		// short-circuit that the generic helper doesn't model, so this
+		// block stays bespoke. The list itself goes through the same
+		// distance-sorted, tag-ordered shape via enumerateFrontiers, so
+		// the `u<N>` tag still round-trips with what's printed here.
 		UnexploredSummary u;
 		summarizeUnexplored(*observer, u);
 
@@ -1240,31 +1175,121 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 		}
 		else
 		{
-			// Order frontiers by ascending distance so the closest unknown
-			// reads first. Walking N is more accessible than walking SW;
-			// putting closest-first matches that affordance.
-			std::vector<UINT8> dirs;
-			for (UINT8 d = 0; d < NUM_WORLD_DIRECTIONS; ++d)
-			{
-				if (u.byDir[d].present) dirs.push_back(d);
-			}
-			std::sort(dirs.begin(), dirs.end(),
-				[&](UINT8 a, UINT8 b)
-				{
-					return u.byDir[a].closestDist < u.byDir[b].closestDist;
-				});
-
-			Console_Println(ST::format("Unexplored frontiers ({}):", dirs.size()));
+			std::vector<ListedFrontier> frontiers;
+			enumerateFrontiers(u, frontiers);
+			Console_Println(ST::format("Unexplored frontiers ({}):", frontiers.size()));
 			std::size_t shown = 0;
-			for (UINT8 d : dirs)
+			for (std::size_t i = 0; i < frontiers.size(); ++i)
 			{
-				const Frontier& f = u.byDir[d];
-				if (maxDist > 0 && f.closestDist > maxDist) continue;
-				Console_Println(formatFrontierLine(shown + 1, d, f));
+				if (maxDist > 0 && frontiers[i].distance > maxDist) continue;
+				Console_Println(formatFrontierLine(frontiers[i], i + 1, *observer));
 				++shown;
 			}
 			if (shown == 0) Console_Println("  (none within range)");
 		}
+	}
+}
+
+namespace ConsoleTags
+{
+	// Soldier-typed categories (e/m/c) all return ListedSoldier from
+	// their enumerator and resolve to the soldier's current tile.
+	// Factored out so the dispatch case bodies can be one-liners.
+	static Result resolveSoldierCategory(
+		const SOLDIERTYPE& observer,
+		int                idx,
+		Target&            out,
+		int&               listSize,
+		void               (*enumerate)(const SOLDIERTYPE&, std::vector<ListedSoldier>&))
+	{
+		std::vector<ListedSoldier> list;
+		enumerate(observer, list);
+		listSize = static_cast<int>(list.size());
+		if (idx < 1 || idx > listSize) return kIndexOutOfRange;
+		out.soldier = list[idx - 1].soldier;
+		out.gridno  = out.soldier->sGridNo;
+		return kResolved;
+	}
+
+	// Tile-typed categories: enumerator yields T with a `gridno` member;
+	// resolution writes that gridno and a null soldier.
+	template <typename T>
+	static Result resolveTileCategory(
+		const SOLDIERTYPE& observer,
+		int                idx,
+		Target&            out,
+		int&               listSize,
+		void               (*enumerate)(const SOLDIERTYPE&, std::vector<T>&))
+	{
+		std::vector<T> list;
+		enumerate(observer, list);
+		listSize = static_cast<int>(list.size());
+		if (idx < 1 || idx > listSize) return kIndexOutOfRange;
+		out.gridno  = list[idx - 1].gridno;
+		out.soldier = nullptr;
+		return kResolved;
+	}
+
+	Result resolve(char prefix, int idx, const SOLDIERTYPE& observer,
+	               Target& out, int& listSize)
+	{
+		out      = {};
+		listSize = 0;
+
+		switch (prefix)
+		{
+			case 'e': return resolveSoldierCategory(observer, idx, out, listSize, enumerateHostiles);
+			case 'm': return resolveSoldierCategory(observer, idx, out, listSize, enumerateTeammates);
+			case 'c': return resolveSoldierCategory(observer, idx, out, listSize, enumerateCivilians);
+			case 'i': return resolveTileCategory<ItemPile>       (observer, idx, out, listSize, enumerateVisibleItems);
+			case 'd': return resolveTileCategory<ListedDoor>     (observer, idx, out, listSize, enumerateDoors);
+			case 'k': return resolveTileCategory<ListedContainer>(observer, idx, out, listSize, enumerateContainers);
+			case 'x': return resolveTileCategory<ListedExit>     (observer, idx, out, listSize, enumerateExits);
+			case 'z': return resolveTileCategory<ListedHazard>   (observer, idx, out, listSize, enumerateHazards);
+			case 'b': return resolveTileCategory<ListedMine>     (observer, idx, out, listSize, enumerateMines);
+			case 'p': return resolveTileCategory<ListedBomb>     (observer, idx, out, listSize, enumerateBombs);
+			case 'u':
+			{
+				// Frontiers need a two-step build: scan, then flatten +
+				// sort. enumerateFrontiers does the second step the same
+				// way Cmd_Nearby's unexplored block does, so the indices
+				// align with what was printed.
+				UnexploredSummary u;
+				summarizeUnexplored(observer, u);
+				std::vector<ListedFrontier> list;
+				enumerateFrontiers(u, list);
+				listSize = static_cast<int>(list.size());
+				if (idx < 1 || idx > listSize) return kIndexOutOfRange;
+				out.gridno  = list[idx - 1].gridno;
+				out.soldier = nullptr;
+				return kResolved;
+			}
+		}
+		return kNotATag;
+	}
+
+	const char* categoryName(char prefix)
+	{
+		switch (prefix)
+		{
+			case 'e': return "hostiles";
+			case 'm': return "teammates";
+			case 'c': return "civilians";
+			case 'i': return "item piles";
+			case 'd': return "doors";
+			case 'k': return "containers";
+			case 'x': return "exits";
+			case 'z': return "hazards";
+			case 'b': return "mines";
+			case 'p': return "placed bombs";
+			case 'u': return "unexplored frontiers";
+		}
+		return nullptr;
+	}
+
+	bool isTagPrefix(char c)
+	{
+		return categoryName(c) != nullptr;
 	}
 }
 

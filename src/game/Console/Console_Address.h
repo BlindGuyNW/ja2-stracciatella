@@ -18,15 +18,27 @@
  *   <name>          one token. Case-insensitive prefix match across
  *                   teammates and known hostiles. Soldier+gridno set.
  *
- *   e<N> / m<N>     positional index — the Nth visible hostile (e) or
- *                   teammate (m) in distance order from the observer.
- *                   Disambiguates duplicate names. Computed on demand,
- *                   so the mapping is deterministic at command time but
- *                   not stable across turns.
+ *   <tag><N>        positional tag — the Nth entry in one of `nearby`'s
+ *                   distance-sorted category lists. Single-letter prefix
+ *                   per category: e=hostiles, m=teammates, c=civilians,
+ *                   i=item piles, d=doors, k=containers, x=exits,
+ *                   z=hazards, b=mines, p=placed bombs, u=unexplored
+ *                   frontiers. (Authoritative list: ConsoleTags.) Soldier
+ *                   tags (e/m/c) set both fields; tile tags set gridno
+ *                   only. The mapping re-enumerates on each call so it's
+ *                   deterministic at command time but not stable across
+ *                   turns — a relevant caveat only for moving entities;
+ *                   static map features (i/d/k/x/z/b/p/u) don't shift on
+ *                   their own between a `nearby` and the next verb.
  *
  *   <dir> <steps>   two tokens. Compass word (n, ne, ..., nw) plus an
  *                   integer step count from the observer's tile. Gridno
- *                   set; soldier null.
+ *                   set; soldier null. Note: this is a strict ray walk
+ *                   to a specific tile, not a description — to address
+ *                   something `nearby` listed, prefer the tag form,
+ *                   since `nearby`'s "distance + direction" rendering
+ *                   describes the entry but only round-trips back to
+ *                   the listed tile when the offset is exactly axial.
  *
  *   <col>,<row>     one token containing a comma. Map coordinate as a
  *                   fallback escape hatch. Gridno set; soldier null.
@@ -49,9 +61,11 @@ int parseTarget(const std::vector<std::string>& args,
                 Target&                         out,
                 ST::string&                     err);
 
-/* Shared enumeration so 'nearby' and address parsing agree on the
- * meaning of e<N> / m<N>. Both lists are sorted by ascending tile
- * distance from observer; ties broken by soldier ID for determinism. */
+/* Shared enumeration for soldier-typed positional tags (e<N>, m<N>).
+ * Both lists are sorted by ascending tile distance from observer; ties
+ * broken by soldier ID for determinism. Non-soldier tags (i/d/k/...)
+ * have their own enumerators in Console_Query.cc and are reached via
+ * ConsoleTags::resolve. */
 struct ListedSoldier
 {
 	SOLDIERTYPE* soldier;

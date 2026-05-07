@@ -1,4 +1,5 @@
 #include "Console_Address.h"
+#include "Console_Tags.h"
 #include "Console_Visibility.h"
 
 #include "Isometric_Utils.h"
@@ -107,15 +108,16 @@ namespace
 		return match;
 	}
 
-	// Recognize positional index tokens like "e3" or "m1": one letter from
-	// {e, m} followed by one or more digits, the whole token. Anything
-	// else (e.g. a name "Ed" or "Mike") parses as not-an-index, so the
-	// caller can fall through to name lookup.
+	// Recognize positional index tokens — one of the category letters
+	// `nearby` prints (see ConsoleTags::isTagPrefix) followed by one or
+	// more digits, the whole token. Anything else (e.g. a name "Ed" or
+	// "Mike") parses as not-an-index, so the caller can fall through to
+	// compass / name lookup.
 	bool parseIndexTag(const std::string& tok, char& cat, int& idx)
 	{
 		if (tok.size() < 2) return false;
 		const char first = static_cast<char>(std::tolower(static_cast<unsigned char>(tok[0])));
-		if (first != 'e' && first != 'm') return false;
+		if (!ConsoleTags::isTagPrefix(first)) return false;
 		for (std::size_t i = 1; i < tok.size(); ++i)
 		{
 			if (!std::isdigit(static_cast<unsigned char>(tok[i]))) return false;
@@ -262,9 +264,12 @@ int parseTarget(const std::vector<std::string>& args,
 		return 1;
 	}
 
-	// Positional-index form: e<N> / m<N>. Resolved against the same
+	// Positional-tag form: e<N> / m<N> / c<N> / i<N> / d<N> / k<N> /
+	// x<N> / z<N> / b<N> / p<N> / u<N>. Resolved against the same
 	// distance-sorted lists `nearby` displays, so the indices the user
-	// sees there are exactly what they can address.
+	// sees there are exactly what they can address. Tags whose category
+	// resolves to a soldier (e/m/c) set out.soldier; the rest set only
+	// out.gridno.
 	{
 		char cat;
 		int  idx;
@@ -272,22 +277,21 @@ int parseTarget(const std::vector<std::string>& args,
 		{
 			if (!observer)
 			{
-				err = "no merc selected to anchor positional index";
+				err = "no merc selected to anchor positional tag";
 				return 0;
 			}
-			std::vector<ListedSoldier> list;
-			if (cat == 'e') enumerateHostiles(*observer, list);
-			else            enumerateTeammates(*observer, list);
-			if (idx > static_cast<int>(list.size()))
+			ConsoleTags::Target tgt;
+			int listSize;
+			const auto r = ConsoleTags::resolve(cat, idx, *observer, tgt, listSize);
+			if (r == ConsoleTags::kIndexOutOfRange)
 			{
 				err = ST::format("only {} {} known; can't address '{}'",
-				                 list.size(),
-				                 cat == 'e' ? "hostiles" : "teammates",
-				                 tok);
+				                 listSize, ConsoleTags::categoryName(cat), tok);
 				return 0;
 			}
-			out.soldier = list[idx - 1].soldier;
-			out.gridno  = out.soldier->sGridNo;
+			// kNotATag is impossible: parseIndexTag already vetted the prefix.
+			out.soldier = tgt.soldier;
+			out.gridno  = tgt.gridno;
 			return 1;
 		}
 	}
@@ -327,7 +331,7 @@ int parseTarget(const std::vector<std::string>& args,
 	}
 	if (count > 1)
 	{
-		err = ST::format("'{}' is ambiguous; use a longer prefix or an index (eN/mN — see 'nearby')", tok);
+		err = ST::format("'{}' is ambiguous; use a longer prefix or a tag from 'nearby' (eN/mN/cN/...)", tok);
 		return 0;
 	}
 	out.soldier = s;

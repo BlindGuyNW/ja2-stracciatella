@@ -838,7 +838,7 @@ void Cmd_Bandage(const std::vector<std::string>& args)
 		if (parseTarget(args, 1, sel, tgt, err) == 0) { Console_Println(err); return; }
 		if (!tgt.soldier)
 		{
-			Console_Println("Bandage target must be a soldier (name, mN, or eN).");
+			Console_Println("Bandage target must be a soldier (name, mN, eN, or cN).");
 			return;
 		}
 		patient = tgt.soldier;
@@ -1155,7 +1155,7 @@ void Cmd_Give(const std::vector<std::string>& args)
 	}
 	if (args.size() < 3)
 	{
-		Console_Println("usage: give <slot> <target>  (target is a name, mN/eN, or col,row)");
+		Console_Println("usage: give <slot> <target>  (target is a name, mN/eN/cN, or col,row)");
 		return;
 	}
 
@@ -1178,13 +1178,13 @@ void Cmd_Give(const std::vector<std::string>& args)
 		return;
 	}
 
-	// Reuse the address parser: it understands names, mN, eN, and col,row.
+	// Reuse the address parser: it understands names, mN/eN/cN, and col,row.
 	Target tgt;
 	ST::string err;
 	if (parseTarget(args, 2, giver, tgt, err) == 0) { Console_Println(err); return; }
 	if (!tgt.soldier)
 	{
-		Console_Println("'give' target must be a soldier (a name, mN, or eN), not a tile.");
+		Console_Println("'give' target must be a soldier (a name, mN, eN, or cN), not a tile.");
 		return;
 	}
 	SOLDIERTYPE* const recipient = tgt.soldier;
@@ -1285,7 +1285,7 @@ namespace
 	// case-insensitively against the first arg. If a match hits, the
 	// caller is asking us to drive the talkbox (pick an approach, skip
 	// the current quote, list options, etc.) — not to start a new
-	// conversation. Anything else (a name, mN, eN, col,row) initiates.
+	// conversation. Anything else (a name, mN/eN/cN, col,row) initiates.
 	bool eqCI(const std::string& a, const char* b)
 	{
 		std::size_t i = 0;
@@ -1473,7 +1473,7 @@ void Cmd_Talk(const std::vector<std::string>& args)
 			runTalkSubcommand("options");
 			return;
 		}
-		Console_Println("usage: talk <target>  (a name, mN, eN, or col,row)");
+		Console_Println("usage: talk <target>  (a name, mN/eN/cN, or col,row)");
 		Console_Println("       talk <approach>  (when a talk panel is open)");
 		Console_Println("       talk options     to list approach keywords");
 		return;
@@ -1521,7 +1521,7 @@ void Cmd_Talk(const std::vector<std::string>& args)
 	if (parseTarget(args, 1, sel, tgt, err) == 0) { Console_Println(err); return; }
 	if (!tgt.soldier)
 	{
-		Console_Println("'talk' target must be a soldier (a name, mN, or eN), not a tile.");
+		Console_Println("'talk' target must be a soldier (a name, mN, eN, or cN), not a tile.");
 		return;
 	}
 	SOLDIERTYPE* const target = tgt.soldier;
@@ -1767,7 +1767,7 @@ void Cmd_Throw(const std::vector<std::string>& args)
 	if (!sel) { Console_Println("No merc selected."); return; }
 	if (args.size() < 3)
 	{
-		Console_Println("usage: throw <slot> <target>  (slot is s1..s19; target is name, mN/eN, dir steps, or col,row)");
+		Console_Println("usage: throw <slot> <target>  (slot is s1..s19; target is name, any nearby tag, dir steps, or col,row)");
 		return;
 	}
 
