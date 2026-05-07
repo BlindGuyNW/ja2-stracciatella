@@ -10,6 +10,8 @@
 #include "Civ_Quotes.h"
 #include "ContentManager.h"
 #include "Dialogue_Control.h"
+#include "Explosion_Control.h"
+#include "ExplosiveModel.h"
 #include "Faces.h"
 #include "GameInstance.h"
 #include "GameScreen.h"
@@ -47,6 +49,7 @@
 #include "Structure.h"
 #include "Structure_Internals.h"
 #include "WeaponModels.h"
+#include "Weapons.h"
 #include "World_Items.h"
 #include "WorldDef.h"
 
@@ -1738,4 +1741,504 @@ void Cmd_Exit(const std::vector<std::string>& args)
 	                           dirWord,
 	                           ok == 1 ? "single" : "whole squad",
 	                           ok == 1 ? "" : ""));
+}
+
+void Cmd_Throw(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const sel = GetSelectedMan();
+	if (!sel) { Console_Println("No merc selected."); return; }
+	if (args.size() < 3)
+	{
+		Console_Println("usage: throw <slot> <target>  (slot is s1..s19; target is name, mN/eN, dir steps, or col,row)");
+		return;
+	}
+
+	const INT8 slot = parseSlotTag(args[1]);
+	if (slot < 0)
+	{
+		Console_Println("first arg must be a slot s1..s19; see 'inventory'.");
+		return;
+	}
+	// HandleItem operates on the held weapon (HANDPOS) and assumes the
+	// throw animation will be played from the main hand. Refusing here
+	// keeps the verb honest about that — the user can `swap` the
+	// grenade into s1 and retry, mirroring the click-to-throw UI's
+	// drag-to-hand requirement.
+	if (slot != HANDPOS)
+	{
+		Console_Println(ST::format(
+			"Throw requires the grenade in s1 (in hand). Try 'swap {} s1' first.",
+			slotTag(slot)));
+		return;
+	}
+
+	OBJECTTYPE& src = sel->inv[slot];
+	if (src.usItem == NOTHING) { Console_Println("Hand is empty."); return; }
+
+	const ItemModel* const it  = GCM->getItem(src.usItem);
+	const UINT32           cls = it->getItemClass();
+	if (cls != IC_GRENADE && cls != IC_THROWN)
+	{
+		Console_Println(ST::format("{} is not throwable.", it->getName()));
+		return;
+	}
+	// Launched grenades (40mm GL rounds, mortar shells) are ammunition,
+	// not hand-throwables; chucking one bare just drops it. Refuse with
+	// a hint so the player doesn't waste a turn.
+	if (const ExplosiveModel* const e = it->asExplosive(); e && e->isLaunchable())
+	{
+		Console_Println(ST::format(
+			"{} is launched ammunition — load it into a launcher first.",
+			it->getName()));
+		return;
+	}
+
+	Target tgt;
+	ST::string err;
+	if (parseTarget(args, 2, sel, tgt, err) == 0) { Console_Println(err); return; }
+
+	// CalcMaxTossRange returns merc-specific reach in tiles based on
+	// strength + the explosive's weight (Weapons.cc:3509). Beyond that,
+	// the throw lands short — refuse cleanly so the player doesn't burn
+	// APs on a wasted toss.
+	const INT32 maxRange = CalcMaxTossRange(sel, src.usItem, TRUE);
+	const INT16 dist     = SpacesAway(sel->sGridNo, tgt.gridno);
+	if (dist > maxRange)
+	{
+		Console_Println(ST::format(
+			"Out of throw range: {} tiles, max {} for {}.",
+			dist, maxRange, it->getName()));
+		return;
+	}
+
+	// HandleItem(...IC_GRENADE...) at Handle_Items.cc:856 routes through
+	// FireWeapon / SendBeginFireWeaponEvent for us — same path the
+	// click-to-throw UI uses. AP cost (MinAPsToAttack) and animation
+	// are the engine's responsibility from here.
+	const INT8             level = static_cast<INT8>(gsInterfaceLevel);
+	const ItemHandleResult r     = HandleItem(sel, tgt.gridno, level, src.usItem, TRUE);
+
+	const ST::string who = tgt.soldier ? tgt.soldier->name
+		: ST::format("({},{})", tgt.gridno % WORLD_COLS, tgt.gridno / WORLD_COLS);
+	switch (r)
+	{
+		case ITEM_HANDLE_OK:
+			Console_Println(ST::format("Throwing {} at {}.", it->getName(), who));
+			break;
+		case ITEM_HANDLE_UNCONSCIOUS:           Console_Println("Merc is unconscious.");          break;
+		case ITEM_HANDLE_NOAPS:                 Console_Println("Not enough APs to throw.");      break;
+		case ITEM_HANDLE_BROKEN:                Console_Println("Item is broken or jammed.");     break;
+		case ITEM_HANDLE_NOROOM:                Console_Println("Can't throw from here.");        break;
+		case ITEM_HANDLE_REFUSAL:               Console_Println("Merc refused.");                 break;
+		case ITEM_HANDLE_CANNOT_GETTO_LOCATION: Console_Println("Can't reach a throwing position."); break;
+		default:                                Console_Println("Throw issued.");                 break;
+	}
+}
+
+void Cmd_Attach(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const s = GetSelectedMan();
+	if (!s) { Console_Println("No merc selected."); return; }
+	if (AM_AN_EPC(s) || AM_A_ROBOT(s))
+	{
+		Console_Println(ST::format("{} cannot manipulate attachments.", s->name));
+		return;
+	}
+	if (args.size() < 3)
+	{
+		Console_Println("usage: attach <slot> detonator|remotedet  (slot is s1..s19; pulls the detonator from this merc's inventory)");
+		return;
+	}
+
+	const INT8 slot = parseSlotTag(args[1]);
+	if (slot < 0)
+	{
+		Console_Println("first arg must be a slot s1..s19; see 'inventory'.");
+		return;
+	}
+	OBJECTTYPE& bomb = s->inv[slot];
+	if (bomb.usItem == NOTHING)
+	{
+		Console_Println(ST::format("{} {}: empty.", slotTag(slot), slotLabel(slot)));
+		return;
+	}
+	const ItemModel* const bombItem = GCM->getItem(bomb.usItem);
+	if (bombItem->getItemClass() != IC_BOMB)
+	{
+		Console_Println(ST::format(
+			"{} is not a plantable explosive — only IC_BOMB items take detonators.",
+			bombItem->getName()));
+		return;
+	}
+	if (bomb.fFlags & OBJECT_ARMED_BOMB)
+	{
+		Console_Println(ST::format(
+			"{} is already armed; can't change attachments.", bombItem->getName()));
+		return;
+	}
+
+	UINT16 want = NOTHING;
+	const std::string& kind = args[2];
+	if      (kind == "detonator" || kind == "timed")  want = DETONATOR;
+	else if (kind == "remotedet" || kind == "remote") want = REMDETONATOR;
+	else
+	{
+		Console_Println(ST::format(
+			"unknown attachment '{}' (try 'detonator' or 'remotedet')", kind));
+		return;
+	}
+
+	if (FindAttachment(&bomb, want) != ITEM_NOT_FOUND)
+	{
+		Console_Println(ST::format(
+			"{} already has a {} attached.",
+			bombItem->getName(), GCM->getItem(want)->getName()));
+		return;
+	}
+	if (!ValidAttachment(want, bomb.usItem))
+	{
+		Console_Println(ST::format(
+			"{} cannot accept a {}.",
+			bombItem->getName(), GCM->getItem(want)->getName()));
+		return;
+	}
+
+	const INT8 attachSlot = FindObj(s, want);
+	if (attachSlot == NO_SLOT)
+	{
+		Console_Println(ST::format(
+			"No {} in {}'s inventory.",
+			GCM->getItem(want)->getName(), s->name));
+		return;
+	}
+
+	// AttachObject moves one item out of the source slot (or decrements
+	// a stack) and into the bomb's attach array. It also runs the
+	// explosives skill check (ATTACHING_DETONATOR_CHECK / _REMOTE_),
+	// which is why we pass the SOLDIERTYPE so XP and chat-of-failure
+	// can fire just like the inventory drag path.
+	if (!AttachObject(s, &bomb, &s->inv[attachSlot], 0))
+	{
+		Console_Println("Attach failed.");
+		return;
+	}
+
+	DirtyMercPanelInterface(s, DIRTYLEVEL2);
+	fInterfacePanelDirty = DIRTYLEVEL2;
+
+	Console_Println(ST::format("Attached {} to {} ({}).",
+	                           GCM->getItem(want)->getName(),
+	                           bombItem->getName(),
+	                           slotTag(slot)));
+}
+
+void Cmd_Arm(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const s = GetSelectedMan();
+	if (!s) { Console_Println("No merc selected."); return; }
+	if (args.size() < 2)
+	{
+		Console_Println("usage: arm <slot> [turns <N> | freq <F> | pressure]  (slot is s1..s19)");
+		return;
+	}
+
+	const INT8 slot = parseSlotTag(args[1]);
+	if (slot < 0)
+	{
+		Console_Println("first arg must be a slot s1..s19; see 'inventory'.");
+		return;
+	}
+	OBJECTTYPE& bomb = s->inv[slot];
+	if (bomb.usItem == NOTHING)
+	{
+		Console_Println(ST::format("{} {}: empty.", slotTag(slot), slotLabel(slot)));
+		return;
+	}
+	const ItemModel*      const it = GCM->getItem(bomb.usItem);
+	const ExplosiveModel* const e  = it->asExplosive();
+	if (!e || it->getItemClass() != IC_BOMB)
+	{
+		Console_Println(ST::format("{} is not an arm-able explosive.", it->getName()));
+		return;
+	}
+	if (bomb.fFlags & OBJECT_ARMED_BOMB)
+	{
+		Console_Println(ST::format("{} is already armed.", it->getName()));
+		return;
+	}
+
+	// Mode auto-detection mirrors ArmBomb (Items.cc:2664-2708): the
+	// attached detonator (or pressureActivated flag) decides timed /
+	// remote / pressure. We let the user override only to disambiguate
+	// or to confirm — never to override the engine's reading of the
+	// attachments, since ArmBomb itself wouldn't honour that.
+	const bool hasTimed  = FindAttachment(&bomb, DETONATOR)    != ITEM_NOT_FOUND;
+	const bool hasRemote = FindAttachment(&bomb, REMDETONATOR) != ITEM_NOT_FOUND;
+	const bool pressure  = e->isPressureTriggered();
+
+	INT8 setting = 0;
+	if (args.size() >= 3)
+	{
+		const std::string& mode = args[2];
+		if (mode == "turns" || mode == "timer")
+		{
+			if (!hasTimed)
+			{
+				Console_Println("Needs a DETONATOR attached for a timed fuse — try 'attach' first.");
+				return;
+			}
+			int n;
+			if (args.size() < 4 || !parseInt(args[3], n) || n < 1 || n > 99)
+			{
+				Console_Println("usage: arm <slot> turns <N>  (N is 1..99 turns)");
+				return;
+			}
+			setting = static_cast<INT8>(n);
+		}
+		else if (mode == "freq" || mode == "frequency" || mode == "remote")
+		{
+			if (!hasRemote)
+			{
+				Console_Println("Needs a REMDETONATOR attached for a remote trigger — try 'attach' first.");
+				return;
+			}
+			int n;
+			if (args.size() < 4 || !parseInt(args[3], n) || n < 1 || n >= PANIC_FREQUENCY)
+			{
+				Console_Println(ST::format(
+					"usage: arm <slot> freq <F>  (F is 1..{})", PANIC_FREQUENCY - 1));
+				return;
+			}
+			setting = static_cast<INT8>(n);
+		}
+		else if (mode == "pressure" || mode == "trip")
+		{
+			if (!pressure)
+			{
+				Console_Println(ST::format(
+					"{} is not pressure-triggered.", it->getName()));
+				return;
+			}
+			setting = 0;
+		}
+		else
+		{
+			Console_Println(ST::format(
+				"unknown arm mode '{}' (try 'turns N', 'freq F', or 'pressure')", mode));
+			return;
+		}
+	}
+	else
+	{
+		// Bare 'arm <slot>' is only enough for pressure mines (no
+		// setting needed). For everything else the engine needs a
+		// timer or frequency — ask explicitly so we never silently
+		// pick a default the player didn't intend.
+		if (pressure && !hasTimed && !hasRemote)
+		{
+			setting = 0;
+		}
+		else if (hasTimed)
+		{
+			Console_Println(ST::format(
+				"{} has a timed detonator. Specify: 'arm {} turns <N>'.",
+				it->getName(), slotTag(slot)));
+			return;
+		}
+		else if (hasRemote)
+		{
+			Console_Println(ST::format(
+				"{} has a remote detonator. Specify: 'arm {} freq <F>'.",
+				it->getName(), slotTag(slot)));
+			return;
+		}
+		else
+		{
+			Console_Println(ST::format(
+				"{} has no detonator. Try 'attach {} detonator' or 'attach {} remotedet' first.",
+				it->getName(), slotTag(slot), slotTag(slot)));
+			return;
+		}
+	}
+
+	if (!ArmBomb(&bomb, setting))
+	{
+		Console_Println(ST::format("Failed to arm {}.", it->getName()));
+		return;
+	}
+
+	DirtyMercPanelInterface(s, DIRTYLEVEL2);
+	fInterfacePanelDirty = DIRTYLEVEL2;
+
+	switch (bomb.bDetonatorType)
+	{
+		case BOMB_TIMED:
+			Console_Println(ST::format(
+				"Armed {}: timed fuse, {} turn{}.",
+				it->getName(), bomb.bDelay, bomb.bDelay == 1 ? "" : "s"));
+			break;
+		case BOMB_REMOTE:
+			Console_Println(ST::format(
+				"Armed {}: remote, frequency {}.",
+				it->getName(), bomb.bFrequency));
+			break;
+		case BOMB_PRESSURE:
+			Console_Println(ST::format("Armed {}: pressure trigger.", it->getName()));
+			break;
+		default:
+			Console_Println(ST::format("Armed {}.", it->getName()));
+			break;
+	}
+}
+
+void Cmd_Plant(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const s = GetSelectedMan();
+	if (!s) { Console_Println("No merc selected."); return; }
+	if (AM_AN_EPC(s))
+	{
+		Console_Println(ST::format("{} is an escort and refuses to handle items.", s->name));
+		return;
+	}
+	if (args.size() < 2)
+	{
+		Console_Println("usage: plant <slot> [target]  (slot is s1..s19; target must be the merc's tile or adjacent)");
+		return;
+	}
+
+	const INT8 slot = parseSlotTag(args[1]);
+	if (slot < 0)
+	{
+		Console_Println("first arg must be a slot s1..s19; see 'inventory'.");
+		return;
+	}
+	OBJECTTYPE& bomb = s->inv[slot];
+	if (bomb.usItem == NOTHING)
+	{
+		Console_Println(ST::format("{} {}: empty.", slotTag(slot), slotLabel(slot)));
+		return;
+	}
+	const ItemModel*      const it = GCM->getItem(bomb.usItem);
+	const ExplosiveModel* const e  = it->asExplosive();
+	if (!e || it->getItemClass() != IC_BOMB)
+	{
+		Console_Println(ST::format("{} is not plantable.", it->getName()));
+		return;
+	}
+
+	// Default plant location is the merc's own tile (matching the
+	// engine's place-on-self behavior). Allow an adjacent target so a
+	// player can plant a tripwire one step away and walk back; anything
+	// farther needs `move` first because the place path doesn't pathfind.
+	INT16 dest = s->sGridNo;
+	if (args.size() >= 3)
+	{
+		Target tgt;
+		ST::string err;
+		if (parseTarget(args, 2, s, tgt, err) == 0) { Console_Println(err); return; }
+		const INT16 d = SpacesAway(s->sGridNo, tgt.gridno);
+		if (d > 1)
+		{
+			Console_Println(ST::format(
+				"Target is {} tiles away — move adjacent first.", d));
+			return;
+		}
+		dest = tgt.gridno;
+	}
+
+	// Pressure mines auto-arm with setting 0 here, mirroring
+	// HandleSoldierDropBomb (Handle_Items.cc:947). Bombs needing a
+	// timer or frequency must be `arm`ed first — we won't pick a
+	// default for them.
+	if (!(bomb.fFlags & OBJECT_ARMED_BOMB))
+	{
+		if (e->isPressureTriggered())
+		{
+			if (!ArmBomb(&bomb, 0))
+			{
+				Console_Println(ST::format("Failed to arm {}.", it->getName()));
+				return;
+			}
+		}
+		else
+		{
+			Console_Println(ST::format(
+				"{} is not armed. Try 'arm {} turns <N>' or 'arm {} freq <F>' first.",
+				it->getName(), slotTag(slot), slotTag(slot)));
+			return;
+		}
+	}
+
+	if (!deductIfCombat(s, AP_DROP_BOMB))
+	{
+		Console_Println(ST::format(
+			"{} needs {} AP to plant but has {}.",
+			s->name, AP_DROP_BOMB, s->bActionPoints));
+		return;
+	}
+
+	// Shared engine helper — same place recipe HandleSoldierDropBomb
+	// uses (XP, trap-detect difficulty, owner stamp, MAPELEMENT_PLAYER_
+	// MINE_PRESENT, BURIED + WORLD_ITEM_ARMED_BOMB pool entry).
+	PlaceArmedBombInWorld(s, &bomb, dest);
+
+	DirtyMercPanelInterface(s, DIRTYLEVEL2);
+	fInterfacePanelDirty = DIRTYLEVEL2;
+
+	if (dest == s->sGridNo)
+	{
+		Console_Println(ST::format("Planted {} at your feet.", it->getName()));
+	}
+	else
+	{
+		Console_Println(ST::format("Planted {} on adjacent tile.", it->getName()));
+	}
+}
+
+void Cmd_Detonate(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const s = GetSelectedMan();
+	if (!s) { Console_Println("No merc selected."); return; }
+	if (args.size() < 2)
+	{
+		Console_Println(ST::format(
+			"usage: detonate <freq>  (freq is 1..{}; 'nearby bombs' shows your placed remote bombs)",
+			PANIC_FREQUENCY - 1));
+		return;
+	}
+
+	int freq;
+	if (!parseInt(args[1], freq) || freq < 1 || freq >= PANIC_FREQUENCY)
+	{
+		Console_Println(ST::format(
+			"freq must be 1..{}.", PANIC_FREQUENCY - 1));
+		return;
+	}
+
+	// Walk gWorldBombs first to give a confirming "triggered N bombs"
+	// message — SetOffBombsByFrequency itself returns nothing, so without
+	// this the user has no way to tell whether their button-press did
+	// anything until the explosions actually fire (or don't).
+	int matches = 0;
+	CFOR_EACH_WORLD_BOMB(wb)
+	{
+		const WORLDITEM& wi = GetWorldItem(wb.iItemIndex);
+		if (!wi.fExists)                                continue;
+		if (!(wi.o.fFlags & OBJECT_ARMED_BOMB))         continue;
+		if (wi.o.fFlags & OBJECT_DISABLED_BOMB)         continue;
+		if (wi.o.bDetonatorType != BOMB_REMOTE)         continue;
+		if (wi.o.bFrequency     != static_cast<INT8>(freq)) continue;
+		++matches;
+	}
+	if (matches == 0)
+	{
+		Console_Println(ST::format(
+			"No armed remote bombs on frequency {}.", freq));
+		return;
+	}
+
+	SetOffBombsByFrequency(s, static_cast<INT8>(freq));
+	Console_Println(ST::format(
+		"Triggered {} bomb{} on frequency {}.",
+		matches, matches == 1 ? "" : "s", freq));
 }

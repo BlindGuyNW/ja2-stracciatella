@@ -10,6 +10,7 @@
 #include "ContentManager.h"
 #include "DisplayCover.h"
 #include "Exit_Grids.h"
+#include "ExplosiveModel.h"
 #include "GameInstance.h"
 #include "Game_Clock.h"
 #include "Handle_Items.h"
@@ -21,6 +22,7 @@
 #include "Keys.h"
 #include "LOS.h"
 #include "MagazineModel.h"
+#include "SmokeEffectModel.h"
 #include "Map_Edgepoints.h"
 #include "Map_Information.h"
 #include "GameSettings.h"
@@ -945,6 +947,79 @@ namespace
 		                  m.player ? "friendly" : "enemy",
 		                  roomSuffix(observer, m.gridno));
 	}
+
+	struct ListedBomb
+	{
+		INT16  distance;
+		INT16  gridno;
+		UINT16 itemId;       // usBombItem if armed, else usItem
+		INT8   detonator;
+		INT8   delay;        // valid when detonator == BOMB_TIMED
+		INT8   frequency;    // valid when detonator == BOMB_REMOTE / BOMB_SWITCH
+	};
+
+	// "Our team" predicate copied from Handle_Items.cc:2848-2850 — the
+	// owner byte stores soldier ID + 2, with 0 reserved for "no owner"
+	// and 1 for editor-placed (Editor/EditorItems.cc:746). Subtract 2
+	// and check against the OUR_TEAM ID range.
+	bool bombOwnedByOurTeam(const OBJECTTYPE& o)
+	{
+		if (o.ubBombOwner <= 1) return false;
+		const INT32 sid = static_cast<INT32>(o.ubBombOwner) - 2;
+		return sid >= gTacticalStatus.Team[OUR_TEAM].bFirstID &&
+		       sid <= gTacticalStatus.Team[OUR_TEAM].bLastID;
+	}
+
+	// Walk gWorldBombs (the per-sector planted-bomb registry) and pick
+	// out our team's placed-and-armed bombs. We deliberately skip
+	// non-armed bomb items in the world (they'd be a dropped-but-not-
+	// planted bomb) and skip enemy bombs — those, when known, surface
+	// through `nearby mines` via MAPELEMENT_ENEMY_MINE_PRESENT instead.
+	void enumerateBombs(const SOLDIERTYPE& observer, std::vector<ListedBomb>& out)
+	{
+		CFOR_EACH_WORLD_BOMB(wb)
+		{
+			const WORLDITEM& wi = GetWorldItem(wb.iItemIndex);
+			if (!wi.fExists) continue;
+			if (!(wi.o.fFlags & OBJECT_ARMED_BOMB)) continue;
+			if (!bombOwnedByOurTeam(wi.o)) continue;
+
+			ListedBomb b{};
+			b.distance  = SpacesAway(observer.sGridNo, wi.sGridNo);
+			b.gridno    = wi.sGridNo;
+			b.itemId    = (wi.o.usBombItem != NOTHING) ? wi.o.usBombItem : wi.o.usItem;
+			b.detonator = wi.o.bDetonatorType;
+			b.delay     = wi.o.bDelay;
+			b.frequency = wi.o.bFrequency;
+			out.push_back(b);
+		}
+		std::sort(out.begin(), out.end(),
+			[](const ListedBomb& a, const ListedBomb& b)
+			{
+				if (a.distance != b.distance) return a.distance < b.distance;
+				return a.gridno < b.gridno;
+			});
+	}
+
+	ST::string formatBombLine(const ListedBomb& b, std::size_t tagN, const SOLDIERTYPE& observer)
+	{
+		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, b.gridno));
+		ST::string mode;
+		switch (b.detonator)
+		{
+			case BOMB_TIMED:    mode = ST::format("timed {}t",  b.delay);     break;
+			case BOMB_REMOTE:   mode = ST::format("remote f{}", b.frequency); break;
+			case BOMB_PRESSURE: mode = ST::string("pressure");                break;
+			case BOMB_SWITCH:   mode = ST::format("switch f{}", b.frequency); break;
+			default:            mode = ST::string("armed");                   break;
+		}
+		// Tag prefix `p` for "placed" — distinct from `b` (mines) so the
+		// two filters can coexist when a player runs `nearby all`.
+		return ST::format("  p{} {} tiles {}: {} ({}){}",
+		                  tagN, b.distance, directionWord(dir),
+		                  itemName(b.itemId), mode,
+		                  roomSuffix(observer, b.gridno));
+	}
 }
 
 void Cmd_Nearby(const std::vector<std::string>& args)
@@ -981,6 +1056,7 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 	const bool wantCivilians  = isDefault || isAll || filter == "civilians" || filter == "civs";
 	const bool wantHazards    = isDefault || isAll || filter == "hazards";
 	const bool wantMines      = isDefault || isAll || filter == "mines";
+	const bool wantBombs      = isDefault || isAll || filter == "bombs";
 	const bool wantItems      = isAll || filter == "items";
 	const bool wantDoors      = isAll || filter == "doors";
 	const bool wantContainers = isAll || filter == "containers";
@@ -988,10 +1064,11 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 	const bool wantUnexplored = (filter == "unexplored" || filter == "unknown");
 
 	if (!wantEnemies && !wantMercs && !wantItems && !wantDoors && !wantContainers &&
-	    !wantCivilians && !wantExits && !wantHazards && !wantMines && !wantUnexplored)
+	    !wantCivilians && !wantExits && !wantHazards && !wantMines && !wantBombs &&
+	    !wantUnexplored)
 	{
 		Console_Println(ST::format(
-			"unknown filter '{}' (try: enemies, mercs, civs, items, doors, containers, exits, hazards, mines, unexplored, all)",
+			"unknown filter '{}' (try: enemies, mercs, civs, items, doors, containers, exits, hazards, mines, bombs, unexplored, all)",
 			filter));
 		return;
 	}
@@ -1122,6 +1199,20 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 		{
 			if (maxDist > 0 && mines[i].distance > maxDist) continue;
 			Console_Println(formatMineLine(mines[i], i + 1, *observer));
+			++shown;
+		}
+		if (shown == 0) Console_Println("  (none)");
+	}
+	if (wantBombs)
+	{
+		std::vector<ListedBomb> bombs;
+		enumerateBombs(*observer, bombs);
+		Console_Println(ST::format("Placed bombs ({}):", bombs.size()));
+		std::size_t shown = 0;
+		for (std::size_t i = 0; i < bombs.size(); ++i)
+		{
+			if (maxDist > 0 && bombs[i].distance > maxDist) continue;
+			Console_Println(formatBombLine(bombs[i], i + 1, *observer));
 			++shown;
 		}
 		if (shown == 0) Console_Println("  (none)");
@@ -1876,11 +1967,66 @@ namespace
 		return itemName(o.usItem);
 	}
 
+	// Inventory line for an explosive: the at-a-glance fields a player
+	// uses to pick one off the belt — damage and radius for the threat
+	// envelope, plus the arming state for IC_BOMB items so the user
+	// knows whether `plant` is ready or `arm` is needed first. We don't
+	// repeat everything `examine` shows; just the minimum to choose.
+	ST::string formatExplosive(const OBJECTTYPE& o)
+	{
+		const ItemModel*      const it = GCM->getItem(o.usItem);
+		const ExplosiveModel* const e  = it->asExplosive();
+		if (!e) return formatGenericObject(o);
+
+		const int n = std::max<int>(1, o.ubNumberOfObjects);
+		const ST::string head = (n > 1)
+			? ST::format("{} x{}", itemName(o.usItem), n)
+			: itemName(o.usItem);
+
+		ST::string stats;
+		if (const ExplosiveBlastEffect* b = e->getBlastEffect();
+		    b && (b->damage || b->radius))
+		{
+			stats = ST::format("{} dmg, {} tiles", b->damage, b->radius);
+		}
+		else if (const ExplosiveSmokeEffect* sm = e->getSmokeEffect();
+		         sm && sm->smokeEffect)
+		{
+			stats = ST::format("{}, {} tiles", sm->smokeEffect->getName(), sm->maxRadius);
+		}
+
+		ST::string state;
+		if (o.fFlags & OBJECT_ARMED_BOMB)
+		{
+			switch (o.bDetonatorType)
+			{
+				case BOMB_TIMED:    state = ST::format("armed, timed {}t",  o.bDelay);     break;
+				case BOMB_REMOTE:   state = ST::format("armed, remote f{}", o.bFrequency); break;
+				case BOMB_PRESSURE: state = ST::string("armed, pressure");                 break;
+				case BOMB_SWITCH:   state = ST::format("armed, switch f{}", o.bFrequency); break;
+				default:            state = ST::string("armed");                           break;
+			}
+		}
+		else if (it->getItemClass() == IC_BOMB && !e->isPressureTriggered())
+		{
+			const bool hasDet = FindAttachment(&o, DETONATOR)    != ITEM_NOT_FOUND ||
+			                    FindAttachment(&o, REMDETONATOR) != ITEM_NOT_FOUND;
+			if (!hasDet) state = ST::string("no detonator");
+		}
+
+		if (!stats.empty() && !state.empty())
+			return ST::format("{} ({}; {})", head, stats, state);
+		if (!stats.empty()) return ST::format("{} ({})", head, stats);
+		if (!state.empty()) return ST::format("{} ({})", head, state);
+		return head;
+	}
+
 	ST::string formatSlot(const OBJECTTYPE& o)
 	{
 		const ItemModel* const it = GCM->getItem(o.usItem);
-		if (it->isGun())  return formatGun(o);
-		if (it->isAmmo()) return formatMagazine(o);
+		if (it->isGun())       return formatGun(o);
+		if (it->isAmmo())      return formatMagazine(o);
+		if (it->asExplosive()) return formatExplosive(o);
 		return formatGenericObject(o);
 	}
 }
@@ -1997,6 +2143,38 @@ namespace
 		{
 			verbs.push_back("bandage [<target>]");
 		}
+		// Explosive verb hints — only what the slot can actually do given
+		// its current state. A grenade in s1 is throwable; a plastic
+		// charge with no detonator wants `attach` first; a fully-armed
+		// bomb wants `plant`. Don't list `detonate` here: it's a player-
+		// global trigger keyed on frequency, not on this slot.
+		const ExplosiveModel* const expl = it->asExplosive();
+		if (expl)
+		{
+			if (it->getItemClass() == IC_GRENADE && slot == HANDPOS)
+			{
+				verbs.push_back("throw <target>");
+			}
+			if (it->getItemClass() == IC_BOMB)
+			{
+				const bool armed     = (o.fFlags & OBJECT_ARMED_BOMB) != 0;
+				const bool hasTimed  = FindAttachment(&o, DETONATOR)    != ITEM_NOT_FOUND;
+				const bool hasRemote = FindAttachment(&o, REMDETONATOR) != ITEM_NOT_FOUND;
+				const bool pressure  = expl->isPressureTriggered();
+				if (!armed && !hasTimed && !hasRemote && !pressure)
+				{
+					verbs.push_back("attach <slot> detonator|remotedet");
+				}
+				if (!armed)
+				{
+					if      (hasTimed)  verbs.push_back("arm <slot> turns <N>");
+					else if (hasRemote) verbs.push_back("arm <slot> freq <F>");
+					else if (pressure)  verbs.push_back("arm <slot>");
+					else                verbs.push_back("arm <slot> turns|freq|pressure");
+				}
+				if (armed) verbs.push_back("plant <slot>");
+			}
+		}
 		verbs.push_back("swap <slot> <slot>");
 		verbs.push_back("give <name>");
 		verbs.push_back("drop");
@@ -2074,6 +2252,96 @@ namespace
 		// is the practical "how much healing is left" number.
 		Console_Println(ST::format(
 			"  Medkit, {} healing points remaining.", TotalPoints(&o)));
+	}
+
+	void describeExplosive(const OBJECTTYPE& o)
+	{
+		const ItemModel*      const it = GCM->getItem(o.usItem);
+		const ExplosiveModel* const e  = it->asExplosive();
+		if (!e) return;
+
+		// Class line. IC_GRENADE covers both hand grenades and launched
+		// (GL/mortar) grenades — distinguish by whether the explosive
+		// carries a launchable calibre. IC_BOMB covers everything you
+		// place: pressure mines, plastics, trip-wires, shaped charges.
+		const char* cls;
+		if      (e->isLaunchable())                    cls = "Launched grenade";
+		else if (it->getItemClass() == IC_GRENADE)     cls = "Hand grenade";
+		else if (e->isPressureTriggered())             cls = "Pressure-triggered explosive";
+		else                                           cls = "Plantable explosive";
+		Console_Println(ST::format("  {}, volatility {}.", cls, e->getVolatility()));
+
+		if (const ExplosiveBlastEffect* b = e->getBlastEffect();
+		    b && (b->damage || b->radius))
+		{
+			Console_Println(ST::format(
+				"  Blast: {} damage, radius {} tiles.", b->damage, b->radius));
+		}
+		if (const ExplosiveStunEffect* st = e->getStunEffect();
+		    st && (st->breathDamage || st->radius))
+		{
+			Console_Println(ST::format(
+				"  Stun: {} breath damage, radius {} tiles.",
+				st->breathDamage, st->radius));
+		}
+		if (const ExplosiveSmokeEffect* sm = e->getSmokeEffect();
+		    sm && sm->smokeEffect)
+		{
+			Console_Println(ST::format(
+				"  Cloud: {}, radius {}-{} tiles, lasts {} turn{}.",
+				sm->smokeEffect->getName(),
+				sm->initialRadius, sm->maxRadius,
+				sm->duration, sm->duration == 1 ? "" : "s"));
+		}
+		if (const ExplosiveLightEffect* l = e->getLightEffect();
+		    l && (l->radius || l->duration))
+		{
+			Console_Println(ST::format(
+				"  Light: radius {} tiles, lasts {} turn{}.",
+				l->radius, l->duration, l->duration == 1 ? "" : "s"));
+		}
+
+		// Per-instance arming state. Only IC_BOMB items hold this between
+		// console interactions — grenades arm-on-throw via the throw
+		// animation, so seeing OBJECT_ARMED_BOMB on a slotted grenade
+		// would be a bug worth surfacing rather than hiding.
+		if (o.fFlags & OBJECT_ARMED_BOMB)
+		{
+			switch (o.bDetonatorType)
+			{
+				case BOMB_TIMED:
+					Console_Println(ST::format(
+						"  Armed: timed fuse, {} turn{} until detonation.",
+						o.bDelay, o.bDelay == 1 ? "" : "s"));
+					break;
+				case BOMB_REMOTE:
+					Console_Println(ST::format(
+						"  Armed: remote detonator, frequency {}.", o.bFrequency));
+					break;
+				case BOMB_PRESSURE:
+					Console_Println("  Armed: pressure trigger.");
+					break;
+				case BOMB_SWITCH:
+					Console_Println(ST::format(
+						"  Armed: panic-trigger switch, frequency {}.", o.bFrequency));
+					break;
+				default:
+					Console_Println("  Armed.");
+					break;
+			}
+		}
+		else if (it->getItemClass() == IC_BOMB)
+		{
+			// Wiring hint for unarmed bombs — tells the player whether
+			// they need to `attach` a detonator before they can `arm`.
+			const bool hasTimed  = FindAttachment(&o, DETONATOR)    != ITEM_NOT_FOUND;
+			const bool hasRemote = FindAttachment(&o, REMDETONATOR) != ITEM_NOT_FOUND;
+			if      (hasTimed && hasRemote) Console_Println("  Wiring: timed and remote detonators attached.");
+			else if (hasTimed)              Console_Println("  Wiring: timed detonator attached.");
+			else if (hasRemote)             Console_Println("  Wiring: remote detonator attached.");
+			else if (e->isPressureTriggered()) Console_Println("  Wiring: pressure trigger (no detonator needed).");
+			else                            Console_Println("  Wiring: no detonator attached — needs DETONATOR or REMDETONATOR.");
+		}
 	}
 
 	void describeAttachments(const OBJECTTYPE& o)
@@ -2164,10 +2432,11 @@ void Cmd_Examine(const std::vector<std::string>& args)
 		}
 	}
 
-	if      (it->isGun())    describeWeapon(o);
-	else if (it->isAmmo())   describeAmmo(o);
-	else if (it->isArmour()) describeArmour(o);
-	else if (it->isMedkit()) describeMedkit(o);
+	if      (it->isGun())       describeWeapon(o);
+	else if (it->isAmmo())      describeAmmo(o);
+	else if (it->isArmour())    describeArmour(o);
+	else if (it->isMedkit())    describeMedkit(o);
+	else if (it->asExplosive()) describeExplosive(o);
 
 	describeAttachments(o);
 

@@ -25,5 +25,10 @@ void Cmd_Give     (const std::vector<std::string>& args);
 void Cmd_Talk     (const std::vector<std::string>& args);
 void Cmd_Exit     (const std::vector<std::string>& args);
 void Cmd_EndTurn  (const std::vector<std::string>& args);
+void Cmd_Throw    (const std::vector<std::string>& args);
+void Cmd_Attach   (const std::vector<std::string>& args);
+void Cmd_Arm      (const std::vector<std::string>& args);
+void Cmd_Plant    (const std::vector<std::string>& args);
+void Cmd_Detonate (const std::vector<std::string>& args);
 
 #endif // GAME_CONSOLE_ACTION_H_
