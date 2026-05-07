@@ -3,9 +3,11 @@
 
 #include "JA2Types.h"
 #include "MessageBoxScreen.h"
+#include "SaveLoadGame.h"
 #include "ScreenIDs.h"
 
 #include <string_theory/string>
+#include <vector>
 
 
 //This flag is used to diferentiate between loading a game and saveing a game.
@@ -25,6 +27,8 @@ void DoDeadIsDeadSave(void);
 void DoQuickLoad(void);
 
 bool AreThereAnySavedGameFiles();
+
+std::vector<SaveGameInfo> GetValidSaveGames();
 
 void DeleteSaveGameNumber(UINT8 save_slot_id);
 

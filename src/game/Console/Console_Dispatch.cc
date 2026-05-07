@@ -10,6 +10,7 @@
 #include "Console_Map.h"
 #include "Console_Query.h"
 #include "Console_Rows.h"
+#include "Console_Save.h"
 #include "Console_Text.h"
 #include "Console_Web.h"
 
@@ -80,6 +81,8 @@ namespace
 		{ "laptop",    &Cmd_Laptop,     "laptop — open the laptop screen"                        },
 		{ "tactical",  &Cmd_Tactical,   "tactical — switch to the tactical screen"               },
 		{ "quit",      &Cmd_Quit,       "quit — open the options screen (Save / Load / Quit)"    },
+		{ "save",      &Cmd_Save,       "save | save list | save <name> | save overwrite <name|sN> | save quick | save delete <name|sN>" },
+		{ "load",      &Cmd_Load,       "load | load <name|sN> | load quick — list saves or load by slot/name" },
 		{ "compress",  &Cmd_Compress,   "compress <off|x1|fast|faster|fastest> — time compression" },
 		{ "log",       &Cmd_Log,        "log [N] — replay last N strategic messages (default 9)" },
 		{ "text",      &Cmd_Text,       "text | text <id> | text <id> <value> — read/write text input fields" },
