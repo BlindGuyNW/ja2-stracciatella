@@ -10,6 +10,7 @@
 
 void Cmd_Sector   (const std::vector<std::string>& args);
 void Cmd_Merc     (const std::vector<std::string>& args);
+void Cmd_Stats    (const std::vector<std::string>& args);
 void Cmd_Nearby   (const std::vector<std::string>& args);
 void Cmd_Look     (const std::vector<std::string>& args);
 void Cmd_Tile     (const std::vector<std::string>& args);

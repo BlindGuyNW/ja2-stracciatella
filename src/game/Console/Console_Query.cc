@@ -29,10 +29,13 @@
 #include "Render_Fun.h"
 #include "Soldier_Control.h"
 #include "Soldier_Macros.h"
+#include "Soldier_Profile_Type.h"
 #include "StrategicMap.h"
 #include "Structure.h"
 #include "Structure_Internals.h"
+#include "Text.h"
 #include "TileDef.h"
+#include "Timer_Control.h"
 #include "WeaponModels.h"
 #include "Weapons.h"
 #include "World_Items.h"
@@ -199,6 +202,88 @@ void Cmd_Merc(const std::vector<std::string>& args)
 	{
 		Console_Println(ST::format("  In hand: {}.", itemName(inHand)));
 	}
+}
+
+namespace
+{
+	const char* skillTraitName(UINT8 trait)
+	{
+		if (trait == NO_SKILLTRAIT) return nullptr;
+		if (trait >= NUM_SKILLTRAITS) return nullptr;
+		return gzMercSkillText[trait].c_str();
+	}
+
+	// "" if the stat hasn't moved within the recently-changed window;
+	// " (up)" or " (down)" if it has. usValueGoneUp's bit is set on increase
+	// and cleared on decrease (the timer is updated either way — see
+	// Drugs_And_Alcohol.cc:167 for the heart-attack down-path), so the bit's
+	// state at lookup time is the up/down direction. Same 60s window the
+	// mapscreen panel uses for green/red coloring (MapScreen.cc:639 PrintStat).
+	const char* statTrend(UINT16 usValueGoneUp, UINT16 increaseBit, UINT32 changeTime)
+	{
+		if (changeTime == 0) return "";
+		if (GetJA2Clock() >= CHANGE_STAT_RECENTLY_DURATION + changeTime) return "";
+		return (usValueGoneUp & increaseBit) ? " (up)" : " (down)";
+	}
+}
+
+void Cmd_Stats(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* s = nullptr;
+	if (args.size() < 2)
+	{
+		s = GetSelectedMan();
+		if (!s) { Console_Println("No merc selected."); return; }
+	}
+	else
+	{
+		ST::string err;
+		s = findTeammateByName(args[1], err);
+		if (!s) { Console_Println(err); return; }
+	}
+
+	const UINT16 up = s->usValueGoneUp;
+
+	Console_Println(ST::format("{}, level {}{}.",
+		s->name, s->bExpLevel,
+		statTrend(up, LVL_INCREASE, s->uiChangeLevelTime)));
+
+	Console_Println(ST::format(
+		"  Strength {}{}, Agility {}{}, Dexterity {}{}, Wisdom {}{}.",
+		s->bStrength,    statTrend(up, STRENGTH_INCREASE, s->uiChangeStrengthTime),
+		s->bAgility,     statTrend(up, AGIL_INCREASE,     s->uiChangeAgilityTime),
+		s->bDexterity,   statTrend(up, DEX_INCREASE,      s->uiChangeDexterityTime),
+		s->bWisdom,      statTrend(up, WIS_INCREASE,      s->uiChangeWisdomTime)));
+
+	Console_Println(ST::format(
+		"  Marksmanship {}{}, Mechanical {}{}, Explosives {}{}, Medical {}{}, Leadership {}{}.",
+		s->bMarksmanship, statTrend(up, MRK_INCREASE,  s->uiChangeMarksmanshipTime),
+		s->bMechanical,   statTrend(up, MECH_INCREASE, s->uiChangeMechanicalTime),
+		s->bExplosive,    statTrend(up, EXP_INCREASE,  s->uiChangeExplosivesTime),
+		s->bMedical,      statTrend(up, MED_INCREASE,  s->uiChangeMedicalTime),
+		s->bLeadership,   statTrend(up, LDR_INCREASE,  s->uiChangeLeadershipTime)));
+
+	if (AM_A_ROBOT(s)) return;
+
+	const char* t1 = skillTraitName(s->ubSkillTrait1);
+	const char* t2 = skillTraitName(s->ubSkillTrait2);
+	if (!t1 && !t2) return;
+
+	ST::string traitLine;
+	if (t1 && t2 && s->ubSkillTrait1 == s->ubSkillTrait2)
+	{
+		traitLine = ST::format("{} {}", t1, gzMercSkillText[NUM_SKILLTRAITS]);
+	}
+	else
+	{
+		if (t1) traitLine = t1;
+		if (t2)
+		{
+			if (!traitLine.empty()) traitLine += ", ";
+			traitLine += t2;
+		}
+	}
+	Console_Println(ST::format("  Skill traits: {}.", traitLine));
 }
 
 namespace
