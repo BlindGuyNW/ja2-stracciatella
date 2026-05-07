@@ -936,6 +936,23 @@ ItemHandleResult HandleItem(SOLDIERTYPE* const s, INT16 usGridNo, const INT8 bLe
 }
 
 
+void PlaceArmedBombInWorld(SOLDIERTYPE* const s, OBJECTTYPE* const o, INT16 const sGridNo)
+{
+	// EXPLOSIVES GAIN (25):  Place a bomb, or buried and armed a mine
+	StatChange(*s, EXPLODEAMT, 25, FROM_SUCCESS);
+
+	int trap_lvl = EffectiveExplosive(s) / 20 + EffectiveExpLevel(s) / 3;
+	o->bTrap       = std::min(trap_lvl, 10);
+	o->ubBombOwner = s->ubID + 2;
+
+	// we now know there is something nasty here
+	gpWorldLevelData[sGridNo].uiFlags |= MAPELEMENT_PLAYER_MINE_PRESENT;
+
+	AddItemToPool(sGridNo, o, BURIED, s->bLevel, WORLD_ITEM_ARMED_BOMB, 0);
+	DeleteObj(o);
+}
+
+
 void HandleSoldierDropBomb(SOLDIERTYPE* const s, INT16 const sGridNo)
 {
 	OBJECTTYPE& o = s->inv[HANDPOS];
@@ -946,18 +963,7 @@ void HandleSoldierDropBomb(SOLDIERTYPE* const s, INT16 const sGridNo)
 	}
 	else if (ArmBomb(&o, 0)) // We have something, all we do is place
 	{
-		// EXPLOSIVES GAIN (25):  Place a bomb, or buried and armed a mine
-		StatChange(*s, EXPLODEAMT, 25, FROM_SUCCESS);
-
-		int trap_lvl = EffectiveExplosive(s) / 20 + EffectiveExpLevel(s) / 3;
-		o.bTrap       = std::min(trap_lvl, 10);
-		o.ubBombOwner = s->ubID + 2;
-
-		// we now know there is something nasty here
-		gpWorldLevelData[sGridNo].uiFlags |= MAPELEMENT_PLAYER_MINE_PRESENT;
-
-		AddItemToPool(sGridNo, &o, BURIED, s->bLevel, WORLD_ITEM_ARMED_BOMB, 0);
-		DeleteObj(&o);
+		PlaceArmedBombInWorld(s, &o, sGridNo);
 	}
 }
 

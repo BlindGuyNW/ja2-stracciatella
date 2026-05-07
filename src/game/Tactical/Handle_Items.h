@@ -98,6 +98,13 @@ BOOLEAN DoesItemPoolContainAnyHiddenItems(const ITEM_POOL* pItemPool);
 void HandleSoldierDropBomb( SOLDIERTYPE *pSoldier, INT16 sGridNo );
 void HandleSoldierUseRemote( SOLDIERTYPE *pSoldier, INT16 sGridNo );
 
+// Place an already-armed bomb into the world: award explosives XP, set
+// the trap-detect difficulty from the merc's skill, stamp the owner,
+// flag the tile as a known friendly mine, and drop the object into the
+// world pool BURIED with WORLD_ITEM_ARMED_BOMB. Caller is responsible
+// for ArmBomb / OBJECT_ARMED_BOMB on pObj before calling.
+void PlaceArmedBombInWorld(SOLDIERTYPE* pSoldier, OBJECTTYPE* pObj, INT16 sGridNo);
+
 BOOLEAN ItemPoolOKForDisplay(const ITEM_POOL* pItemPool, INT8 bZLevel);
 
 void SoldierHandleDropItem( SOLDIERTYPE *pSoldier );
