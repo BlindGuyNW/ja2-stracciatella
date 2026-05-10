@@ -14,6 +14,7 @@
 #include "ContentManager.h"
 #include "ContentMusic.h"
 #include "Creature_Spreading.h"
+#include "DamageLog.h"
 #include "Debug.h"
 #include "Dialogue_Control.h"
 #include "Enemy_Soldier_Save.h"
@@ -641,6 +642,10 @@ void InitScriptingEngine();
 
 void LoadSavedGame(const ST::string &saveName)
 {
+	// Damage log is per-session; load wipes its meaning (the elapsed
+	// timestamps would still reference the pre-load clock).
+	DamageLog::Reset();
+
 	// Save the game before if we are in Dead is Dead Mode
 	if (gGameOptions.ubGameSaveMode == DIF_DEAD_IS_DEAD) {
 		// The previous options screen may be the main menu if we use quicksave/load

@@ -6,6 +6,7 @@ set(LOCAL_JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Button_System.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Cursor_Control.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/DamageLog.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/DirFs.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/FileMan.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Font.cc

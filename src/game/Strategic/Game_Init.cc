@@ -9,6 +9,7 @@
 #include "ContentManager.h"
 #include "ContentMusic.h"
 #include "Creature_Spreading.h"
+#include "DamageLog.h"
 #include "Dialogue_Control.h"
 #include "EMail.h"
 #include "Finances.h"
@@ -202,6 +203,9 @@ void InitNewGame()
 	SetSelectedMan(0);
 
 	RESET_CHEAT_LEVEL();
+
+	// Clean slate for the damage review buffer.
+	DamageLog::Reset();
 
 	if (gubScreenCount == 0)
 	{

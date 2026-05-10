@@ -3,6 +3,7 @@
 #include "Console_Aim.h"
 #include "Console_Bobbyr.h"
 #include "Console_Cheat.h"
+#include "Console_Damage.h"
 #include "Console_Debug.h"
 #include "Console_Email.h"
 #include "Console_Gui.h"
@@ -85,6 +86,7 @@ namespace
 		{ "load",      &Cmd_Load,       "load | load <name|sN> | load quick — list saves or load by slot/name" },
 		{ "compress",  &Cmd_Compress,   "compress <off|x1|fast|faster|fastest> — time compression" },
 		{ "log",       &Cmd_Log,        "log [N] — replay last N strategic messages (default 9)" },
+		{ "damage",    &Cmd_Damage,     "damage [<N>|all] — review the last damage events; <N> for detail (1 = newest)" },
 		{ "text",      &Cmd_Text,       "text | text <id> | text <id> <value> — read/write text input fields" },
 		{ "web",       &Cmd_Web,        "web | web <name> — list or open a bookmarked laptop site (laptop only)" },
 		{ "g",         &Cmd_Gui,        "g list | g click <id> — enumerate or click visible buttons" },

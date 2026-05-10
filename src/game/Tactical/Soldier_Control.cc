@@ -8,6 +8,7 @@
 #include "Campaign_Types.h"
 #include "Civ_Quotes.h"
 #include "ContentManager.h"
+#include "DamageLog.h"
 #include "Debug.h"
 #include "Dialogue_Control.h"
 #include "Directories.h"
@@ -2628,6 +2629,67 @@ static void SoldierGotHitGunFire(SOLDIERTYPE* pSoldier, UINT16 bDirection, SOLDI
 static void SoldierGotHitPunch(SOLDIERTYPE* pSoldier);
 
 
+namespace
+{
+	// SoldierTakeDamage is called both directly (bleed, fall, gas, vehicle
+	// passenger) and from inside EVENT_SoldierGotHit's body. The richer
+	// EVENT_SoldierGotHit hook owns the record for any attack-driven hit;
+	// this guard makes SoldierTakeDamage's tail hook a no-op when it is
+	// running as part of an EVENT_SoldierGotHit pass so we don't double-log.
+	bool g_damage_log_in_event = false;
+
+	bool DamageLog_VisibilityKnown(const SOLDIERTYPE* s)
+	{
+		if (s == nullptr)         return false;
+		if (s->bTeam == OUR_TEAM) return true;
+		if (!s->bActive)          return false;
+		if (!s->bInSector)        return false;
+		return gbPublicOpplist[OUR_TEAM][s->ubID] != NOT_HEARD_OR_SEEN;
+	}
+
+	void DamageLog_PushFromAttack(
+		const SOLDIERTYPE* tgt, INT8 lifeBefore, INT8 breathBefore,
+		const SOLDIERTYPE* att, UINT16 weapon, UINT8 reason,
+		UINT8 hitLoc, UINT8 special, UINT8 direction)
+	{
+		DamageLog::Record rec{};
+		rec.timestamp_ms     = GetJA2Clock();
+		rec.target_name      = tgt->name;
+		rec.target_team      = tgt->bTeam;
+		rec.target_visible   = DamageLog_VisibilityKnown(tgt);
+		rec.life_before      = lifeBefore;
+		rec.life_after       = tgt->bLife;
+		rec.life_max         = tgt->bLifeMax;
+		rec.breath_before    = breathBefore;
+		rec.breath_after     = tgt->bBreath;
+		rec.breath_max       = tgt->bBreathMax;
+		rec.damage_life      = static_cast<INT16>(lifeBefore   - tgt->bLife);
+		rec.damage_breath    = static_cast<INT16>(breathBefore - tgt->bBreath);
+		rec.weapon_index     = weapon;
+		rec.reason           = reason;
+		rec.hit_location     = hitLoc;
+		rec.special          = special;
+		rec.direction        = direction;
+		rec.killed           = (tgt->bLife == 0 && lifeBefore > 0);
+		rec.knocked_out      = (tgt->bLife > 0 && tgt->bLife < CONSCIOUSNESS && lifeBefore >= CONSCIOUSNESS);
+		if (att != nullptr)
+		{
+			rec.attacker_name    = att->name;
+			rec.attacker_team    = att->bTeam;
+			rec.attacker_visible = DamageLog_VisibilityKnown(att);
+			rec.range_tiles      = static_cast<INT16>(PythSpacesAway(att->sGridNo, tgt->sGridNo));
+		}
+		else
+		{
+			rec.attacker_team    = -1;
+			rec.attacker_visible = false;
+			rec.range_tiles      = -1;
+		}
+		DamageLog::Push(rec);
+	}
+}
+
+
 // ATE: THIS FUNCTION IS USED FOR ALL SOLDIER TAKE DAMAGE FUNCTIONS!
 void EVENT_SoldierGotHit(SOLDIERTYPE* pSoldier, const UINT16 usWeaponIndex, INT16 sDamage, INT16 sBreathLoss, const UINT16 bDirection, const UINT16 sRange, SOLDIERTYPE* const att, const UINT8 ubSpecial, const UINT8 ubHitLocation, const INT16 sLocationGrid)
 {
@@ -2797,15 +2859,26 @@ void EVENT_SoldierGotHit(SOLDIERTYPE* pSoldier, const UINT16 usWeaponIndex, INT1
 	}
 
 
+	const INT8 dmgLifeBefore   = pSoldier->bLife;
+	const INT8 dmgBreathBefore = pSoldier->bBreath;
+
 	// OK, If we are a vehicle.... damage vehicle...( people inside... )
 	if ( pSoldier->uiStatusFlags & SOLDIER_VEHICLE )
 	{
+		g_damage_log_in_event = true;
 		SoldierTakeDamage(pSoldier, sDamage, sBreathLoss, ubReason, att);
+		g_damage_log_in_event = false;
+		DamageLog_PushFromAttack(pSoldier, dmgLifeBefore, dmgBreathBefore,
+			att, usWeaponIndex, ubReason, ubHitLocation, ubSpecial, static_cast<UINT8>(bDirection));
 		return;
 	}
 
 	// DEDUCT LIFE
+	g_damage_log_in_event = true;
 	ubCombinedLoss = SoldierTakeDamage(pSoldier, sDamage, sBreathLoss, ubReason, att);
+	g_damage_log_in_event = false;
+	DamageLog_PushFromAttack(pSoldier, dmgLifeBefore, dmgBreathBefore,
+		att, usWeaponIndex, ubReason, ubHitLocation, ubSpecial, static_cast<UINT8>(bDirection));
 
 	// ATE: OK, Let's check our ASSIGNMENT state,
 	// If anything other than on a squad or guard, make them guard....
@@ -5431,6 +5504,7 @@ UINT8 SoldierTakeDamage(SOLDIERTYPE* const pSoldier, INT16 sLifeDeduct, INT16 sB
 	INT16 sAPCost;
 	UINT8 ubBlood;
 
+	const INT8 dmgLogBreathBefore = pSoldier->bBreath;
 
 	pSoldier->ubLastDamageReason = ubReason;
 
@@ -5852,6 +5926,15 @@ UINT8 SoldierTakeDamage(SOLDIERTYPE* const pSoldier, INT16 sLifeDeduct, INT16 sB
 		DecayIndividualOpplist( pSoldier );
 	}
 
+	// Damage log: only push from here when not nested inside
+	// EVENT_SoldierGotHit (that path owns the rich attack record).
+	// This catches non-attack damage: bleed, fall, gas, electrocution,
+	// vehicle-passenger ticks, etc.
+	if (!g_damage_log_in_event && (bOldLife != pSoldier->bLife || dmgLogBreathBefore != pSoldier->bBreath))
+	{
+		DamageLog_PushFromAttack(pSoldier, bOldLife, dmgLogBreathBefore,
+			attacker, NOTHING, ubReason, 0, 0, 0xFF);
+	}
 
 	return( ubCombinedLoss );
 }

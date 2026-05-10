@@ -3,6 +3,7 @@
 #include "Animation_Data.h"
 #include "Buildings.h"
 #include "ContentManager.h"
+#include "DamageLog.h"
 #include "Debug.h"
 #include "EditorBuildings.h"
 #include "EditorMapInfo.h"
@@ -2124,6 +2125,11 @@ catch (const std::runtime_error& err)
 /// Internal load world that reads from sgp file
 void LoadWorldFromSGPFile(SGPFile *f)
 {
+	// Damage log is scoped to the current sector / battle. A new sector
+	// load means prior records belong to a different fight; clearing
+	// here is safer than letting the ring slowly evict them.
+	DamageLog::Reset();
+
 	// Reset flags for outdoors/indoors
 	gfBasement = FALSE;
 	gfCaves    = FALSE;
