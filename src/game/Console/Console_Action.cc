@@ -1689,7 +1689,7 @@ void Cmd_Throw(const std::vector<std::string>& args)
 	if (!sel) return;
 	if (args.size() < 3)
 	{
-		Console_Println("usage: throw <slot> <target>  (slot is s1..s19; target is name, any nearby tag, dir steps, or col,row)");
+		Console_Println("usage: throw <slot> <target> [aim 0-4]  (slot is s1..s19; target is name, any nearby tag, dir steps, or col,row; aim is throwing-knife only)");
 		return;
 	}
 
@@ -1701,13 +1701,13 @@ void Cmd_Throw(const std::vector<std::string>& args)
 	}
 	// HandleItem operates on the held weapon (HANDPOS) and assumes the
 	// throw animation will be played from the main hand. Refusing here
-	// keeps the verb honest about that — the user can `swap` the
-	// grenade into s1 and retry, mirroring the click-to-throw UI's
-	// drag-to-hand requirement.
+	// keeps the verb honest about that — the user can `swap` the item
+	// into s1 and retry, mirroring the click-to-throw UI's drag-to-hand
+	// requirement.
 	if (slot != HANDPOS)
 	{
 		Console_Println(ST::format(
-			"Throw requires the grenade in s1 (in hand). Try 'swap {} s1' first.",
+			"Throw requires the item in s1 (in hand). Try 'swap {} s1' first.",
 			slotTag(slot)));
 		return;
 	}
@@ -1717,14 +1717,16 @@ void Cmd_Throw(const std::vector<std::string>& args)
 
 	const ItemModel* const it  = GCM->getItem(src.usItem);
 	const UINT32           cls = it->getItemClass();
-	if (cls != IC_GRENADE && cls != IC_THROWN)
+	if (cls != IC_GRENADE && cls != IC_THROWN && cls != IC_THROWING_KNIFE)
 	{
 		Console_Println(ST::format("{} is not throwable.", it->getName()));
 		return;
 	}
 	// Launched grenades (40mm GL rounds, mortar shells) are ammunition,
 	// not hand-throwables; chucking one bare just drops it. Refuse with
-	// a hint so the player doesn't waste a turn.
+	// a hint so the player doesn't waste a turn. (Throwing knives aren't
+	// ExplosiveModel-backed, so asExplosive() returns nullptr for them
+	// and this branch is skipped.)
 	if (const ExplosiveModel* const e = it->asExplosive(); e && e->isLaunchable())
 	{
 		Console_Println(ST::format(
@@ -1735,12 +1737,40 @@ void Cmd_Throw(const std::vector<std::string>& args)
 
 	Target tgt;
 	ST::string err;
-	if (parseTarget(args, 2, sel, tgt, err) == 0) { Console_Println(err); return; }
+	const int consumed = parseTarget(args, 2, sel, tgt, err);
+	if (consumed == 0) { Console_Println(err); return; }
+
+	// Throwing knives go through the gun pipeline (Handle_Items.cc:267
+	// groups IC_GUN with IC_THROWING_KNIFE) and CalcThrownChanceToHit
+	// respects bAimTime, so we expose 'aim 0..4' for knives only —
+	// grenade scatter doesn't use bAimTime the same way and we don't
+	// want to perturb the existing toss behavior.
+	int aim = 0;
+	const std::size_t ai = static_cast<std::size_t>(2 + consumed);
+	if (ai < args.size() && args[ai] == "aim")
+	{
+		if (cls != IC_THROWING_KNIFE)
+		{
+			Console_Println("aim only applies to throwing knives.");
+			return;
+		}
+		if (ai + 1 >= args.size() || !parseInt(args[ai + 1], aim) || aim < 0 || aim > 4)
+		{
+			Console_Println("aim must be 0..4 (0 = snap, 4 = full).");
+			return;
+		}
+	}
+	else if (ai < args.size())
+	{
+		Console_Println(ST::format("unexpected token '{}' (try 'aim N')", args[ai]));
+		return;
+	}
 
 	// CalcMaxTossRange returns merc-specific reach in tiles based on
-	// strength + the explosive's weight (Weapons.cc:3509). Beyond that,
-	// the throw lands short — refuse cleanly so the player doesn't burn
-	// APs on a wasted toss.
+	// strength + the item's weight (Weapons.cc:3509). Beyond that, the
+	// throw lands short — refuse cleanly so the player doesn't burn APs
+	// on a wasted toss. The AI uses this same fn for throwing knives
+	// (Attacks.cc:235), so it's correct across classes.
 	const INT32 maxRange = CalcMaxTossRange(sel, src.usItem, TRUE);
 	const INT16 dist     = SpacesAway(sel->sGridNo, tgt.gridno);
 	if (dist > maxRange)
@@ -1751,10 +1781,18 @@ void Cmd_Throw(const std::vector<std::string>& args)
 		return;
 	}
 
-	// HandleItem(...IC_GRENADE...) at Handle_Items.cc:856 routes through
-	// FireWeapon / SendBeginFireWeaponEvent for us — same path the
-	// click-to-throw UI uses. AP cost (MinAPsToAttack) and animation
-	// are the engine's responsibility from here.
+	// For throwing knives, encode aim into the soldier's UI-aim fields
+	// the way the click handler does (Handle_UI.cc:2140); see Cmd_Fire.
+	if (cls == IC_THROWING_KNIFE)
+	{
+		sel->bShownAimTime = static_cast<INT8>(aim * 2);
+		sel->bAimTime      = static_cast<INT8>(aim);
+	}
+
+	// HandleItem dispatches by item class: IC_GRENADE/IC_THROWN take the
+	// toss path at Handle_Items.cc:856; IC_THROWING_KNIFE takes the gun
+	// path at Handle_Items.cc:267 (UseGun / FireBulletGivenTarget). AP
+	// cost and animation are the engine's responsibility from here.
 	const INT8             level = static_cast<INT8>(gsInterfaceLevel);
 	const ItemHandleResult r     = HandleItem(sel, tgt.gridno, level, src.usItem, TRUE);
 

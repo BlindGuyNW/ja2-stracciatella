@@ -31,6 +31,7 @@
 #include "Overhead.h"
 #include "Overhead_Types.h"
 #include "PathAI.h"
+#include "Points.h"
 #include "Render_Fun.h"
 #include "Soldier_Control.h"
 #include "Soldier_Macros.h"
@@ -1615,31 +1616,40 @@ void Cmd_Cth(const std::vector<std::string>& args)
 		Console_Println("No weapon in main hand.");
 		return;
 	}
-	if (GCM->getItem(weapon)->getItemClass() != IC_GUN)
+	const ItemModel* const item = GCM->getItem(weapon);
+	const UINT32           cls  = item->getItemClass();
+	if (cls != IC_GUN && cls != IC_THROWING_KNIFE)
 	{
-		Console_Println(ST::format("Held item ({}) is not a gun.", GCM->getItem(weapon)->getName()));
+		Console_Println(ST::format("Held item ({}) is not a gun or throwing knife.", item->getName()));
 		return;
 	}
 
 	// Mirror what UI_Cursors.cc:244-269 computes for the cursor's CTH text:
-	// base gun CTH × chance-to-get-through (cover/LOS), as a percent.
-	// Body part defaults to torso; tile shots use cube level 2 (the value
-	// Handle_UI.cc:2192 sets for shoot-at-interactive-tile, the closest
-	// thing the engine has to "centre of tile").
+	// base CTH × chance-to-get-through (cover/LOS), as a percent, plus
+	// AP cost (CalcTotalAPsToAttack folds in turning + aim time, the same
+	// way UI_Cursors.cc:191 computes the cursor display). For throwing
+	// knives the engine swaps base CTH to CalcThrownChanceToHit
+	// (Weapons.cc:647). Body part defaults to torso; tile shots use cube
+	// level 2 (the value Handle_UI.cc:2192 sets for shoot-at-interactive-
+	// tile, the closest thing the engine has to "centre of tile").
 	const UINT8 part = AIM_SHOT_TORSO;
 
 	ST::string cells;
 	for (int aim = 0; aim <= 4; ++aim)
 	{
-		UINT32 base = CalcChanceToHitGun(sel, static_cast<UINT16>(tgt.gridno),
-		                                 static_cast<UINT8>(aim), part, FALSE);
+		UINT32 base = (cls == IC_THROWING_KNIFE)
+			? CalcThrownChanceToHit(sel, static_cast<INT16>(tgt.gridno),
+			                        static_cast<UINT8>(aim), part)
+			: CalcChanceToHitGun(sel, static_cast<UINT16>(tgt.gridno),
+			                     static_cast<UINT8>(aim), part, FALSE);
 		UINT32 through = tgt.soldier
 			? SoldierToSoldierBodyPartChanceToGetThrough(sel, tgt.soldier, part)
 			: SoldierToLocationChanceToGetThrough(sel, tgt.gridno, gsInterfaceLevel, 2, nullptr);
-		const int pct = static_cast<int>(base * through / 100);
+		const int   pct = static_cast<int>(base * through / 100);
+		const UINT8 ap  = CalcTotalAPsToAttack(sel, tgt.gridno, TRUE, static_cast<INT8>(aim));
 
 		if (!cells.empty()) cells += "  ";
-		cells += ST::format("aim {}: {}%", aim, pct);
+		cells += ST::format("aim {}: {}% / {} AP", aim, pct, ap);
 	}
 
 	const ST::string label = tgt.soldier ? tgt.soldier->name : ST::string("target tile");
