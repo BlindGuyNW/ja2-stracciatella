@@ -23,6 +23,23 @@ namespace ConsoleVis
 	/** True if the world tile at gridno is on a revealed mapelement
 	 *  for the given level (0 = ground, 1 = roof). */
 	bool IsKnownTile(INT16 gridno, INT8 level);
+
+	/* Civilian sticky-memory.
+	 *
+	 * gbPublicOpplist decays civilian sightings on the same timer it
+	 * decays enemies — but for the SR user this loses an asymmetry a
+	 * sighted player keeps for free: "I remember the bartender was at
+	 * the bar." Tick() runs once per frame, snapshots every
+	 * IsKnownSoldier civilian's position/stance/time, and remembers
+	 * them across opplist decay until the sector changes. Cleared on
+	 * sector load (detected by comparing gWorldSector). */
+	void Tick();
+
+	bool   CivilianEverSeenHere(UINT8 ubID);
+	INT16  CivilianLastGridno  (UINT8 ubID);
+	INT8   CivilianLastLevel   (UINT8 ubID);
+	UINT16 CivilianLastAnim    (UINT8 ubID);
+	UINT32 CivilianLastSeenMin (UINT8 ubID);
 }
 
 #endif // GAME_CONSOLE_VISIBILITY_H_

@@ -73,15 +73,33 @@ namespace
 		}
 	}
 
-	const char* stanceWord(const SOLDIERTYPE& s)
+	const char* stanceWord(AnimationHeight h)
 	{
-		switch (GetStance(s))
+		switch (h)
 		{
 			case ANIM_STAND:  return "standing";
 			case ANIM_CROUCH: return "crouched";
 			case ANIM_PRONE:  return "prone";
 		}
 		return "?";
+	}
+
+	const char* stanceWord(const SOLDIERTYPE& s)
+	{
+		return stanceWord(GetStance(s));
+	}
+
+	// Stance for an animation state read out of memory (e.g. a sticky
+	// civilian snapshot) rather than off a live SOLDIERTYPE. Same lookup
+	// the engine's GetStance helper uses. Guarded because the input
+	// comes from cached state — a malformed save or a snapshot pulled
+	// during a transitional anim should degrade to "?" rather than read
+	// out of bounds.
+	const char* stanceWordForAnim(UINT16 animState)
+	{
+		if (animState >= NUMANIMATIONSTATES) return "?";
+		return stanceWord(
+			static_cast<AnimationHeight>(gAnimControl[animState].ubEndHeight));
 	}
 
 	const char* terrainWord(TerrainTypeDefines t)
@@ -539,19 +557,50 @@ namespace
 		                  roomSuffix(observer, d.gridno));
 	}
 
-	// Civilians use the same fog rule as enemies — the engine's
-	// gbPublicOpplist tracks who's been spotted by the team. Civs can
-	// hide (quest NPCs, child cowering, etc.); listing only known ones
-	// keeps that spoiler-safe.
+	// Civilians use the engine's public opplist as their live-visibility
+	// signal, the same as enemies. But civs decay out of the opplist on
+	// the same timer enemies do, which loses an asymmetry a sighted
+	// player keeps for free: visual memory of where someone was. We
+	// extend the listing with ConsoleVis's sticky-memory channel —
+	// civilians the player has seen *at any point this sector* show up
+	// even after they've decayed, with their last-known tile/stance and
+	// a "(last seen Nh ago)" suffix on the printed line. Hidden quest
+	// NPCs the player has never encountered stay unlisted, preserving
+	// the spoiler property of the original fog rule.
 	void enumerateCivilians(const SOLDIERTYPE& observer, std::vector<ListedSoldier>& out)
 	{
 		FOR_EACH_MERC(it)
 		{
 			SOLDIERTYPE* const t = *it;
-			if (t->ubID == observer.ubID)        continue;
-			if (t->bTeam != CIV_TEAM)            continue;
-			if (!ConsoleVis::IsKnownSoldier(*t)) continue;
-			out.push_back({ t, SpacesAway(observer.sGridNo, t->sGridNo) });
+			if (t->ubID == observer.ubID)                continue;
+			if (t->bTeam != CIV_TEAM)                    continue;
+			// Drop dead / off-sector / inactive civs from the listing
+			// regardless of whether we have a sticky record of them —
+			// once they're gone we have no useful position to surface.
+			if (!t->bActive || t->bLife <= 0 || !t->bInSector) continue;
+
+			const bool live = ConsoleVis::IsKnownSoldier(*t);
+			ListedSoldier ls{};
+			ls.soldier = t;
+			if (live)
+			{
+				ls.gridno    = t->sGridNo;
+				ls.distance  = SpacesAway(observer.sGridNo, t->sGridNo);
+				ls.stale     = false;
+			}
+			else if (ConsoleVis::CivilianEverSeenHere(t->ubID))
+			{
+				ls.gridno      = ConsoleVis::CivilianLastGridno(t->ubID);
+				ls.distance    = SpacesAway(observer.sGridNo, ls.gridno);
+				ls.stale       = true;
+				ls.lastSeenMin = ConsoleVis::CivilianLastSeenMin(t->ubID);
+				ls.animState   = ConsoleVis::CivilianLastAnim(t->ubID);
+			}
+			else
+			{
+				continue;
+			}
+			out.push_back(ls);
 		}
 		std::sort(out.begin(), out.end(),
 			[](const ListedSoldier& a, const ListedSoldier& b)
@@ -561,18 +610,31 @@ namespace
 			});
 	}
 
+	ST::string lastSeenSuffix(UINT32 sinceMin)
+	{
+		const UINT32 ago = GetWorldTotalMin() - sinceMin;
+		if (ago < 60)        return ST::format(" (last seen {}m ago)", ago);
+		if (ago < 60 * 24)   return ST::format(" (last seen {}h ago)", ago / 60);
+		return ST::format(" (last seen {}d ago)", ago / (60 * 24));
+	}
+
 	ST::string formatCivilianLine(const ListedSoldier& ls, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
 		const SOLDIERTYPE& t = *ls.soldier;
 		// Civilians' names are often generic ("Civilian") for crowd extras;
 		// quest NPCs have proper names. Either way, lead with the name and
 		// leave gameplay vitals (life/AP) off — civs aren't typically a
-		// resource the player manages.
-		return ST::format("  c{} {} {}, {}, {}{}",
-		                  tagN, t.name, coordLabel(t.sGridNo),
-		                  formatOffset(observer.sGridNo, t.sGridNo),
-		                  stanceWord(t),
-		                  roomSuffix(observer, t.sGridNo));
+		// resource the player manages. For stale entries everything
+		// position/stance-related comes from the snapshot, not the live
+		// SOLDIERTYPE, so we don't leak the engine's current truth.
+		const char* stance = ls.stale ? stanceWordForAnim(ls.animState)
+		                              : stanceWord(t);
+		return ST::format("  c{} {} {}, {}, {}{}{}",
+		                  tagN, t.name, coordLabel(ls.gridno),
+		                  formatOffset(observer.sGridNo, ls.gridno),
+		                  stance,
+		                  roomSuffix(observer, ls.gridno),
+		                  ls.stale ? lastSeenSuffix(ls.lastSeenMin) : ST::string());
 	}
 
 	struct ListedExit
@@ -1155,8 +1217,12 @@ namespace ConsoleTags
 		enumerate(observer, list);
 		listSize = static_cast<int>(list.size());
 		if (idx < 1 || idx > listSize) return kIndexOutOfRange;
+		// Use the listed gridno rather than soldier->sGridNo: for stale
+		// civilians these differ, and we want `cN` to address the place
+		// the player remembers seeing them, not the engine's current
+		// position (which the player has no in-game way to know).
 		out.soldier = list[idx - 1].soldier;
-		out.gridno  = out.soldier->sGridNo;
+		out.gridno  = list[idx - 1].gridno;
 		return kResolved;
 	}
 
@@ -1881,18 +1947,26 @@ void Cmd_Room(const std::vector<std::string>& args)
 		for (std::size_t i = 0; i < hostiles.size();  ++i) consider(*hostiles[i].soldier,  "e", i + 1);
 		for (std::size_t i = 0; i < teammates.size(); ++i) consider(*teammates[i].soldier, "m", i + 1);
 
-		// Civilians: re-enumerate using the same predicate as
-		// formatCivilianLine (CIV_TEAM + known). Civs don't have a global
-		// enumerator exposed here, but the rule is one liner.
-		std::size_t civN = 0;
-		FOR_EACH_MERC(it)
+		// Civilians: walk the same enumerateCivilians the nearby printer
+		// uses, so the cN tags in this room dump match what `nearby c`
+		// shows globally. Numbering by a room-local counter would break
+		// `goto c3` cross-references between the two surfaces.
+		std::vector<ListedSoldier> civs;
+		enumerateCivilians(*observer, civs);
+		for (std::size_t i = 0; i < civs.size(); ++i)
 		{
-			SOLDIERTYPE* const t = *it;
-			if (t->ubID == observer->ubID) continue;
-			if (t->bTeam != CIV_TEAM)      continue;
-			if (!ConsoleVis::IsKnownSoldier(*t)) continue;
-			++civN;
-			consider(*t, "c", civN);
+			const ListedSoldier& ls = civs[i];
+			if (GetRoom(ls.gridno) != roomId) continue;
+			const char* stance = ls.stale
+				? stanceWordForAnim(ls.animState)
+				: stanceWord(*ls.soldier);
+			ST::string suffix = ls.stale
+				? lastSeenSuffix(ls.lastSeenMin)
+				: ST::string();
+			lines.push_back(ST::format("    c{} {} ({}, {}){}",
+			                           i + 1, ls.soldier->name,
+			                           formatOffset(observer->sGridNo, ls.gridno),
+			                           stance, suffix));
 		}
 
 		if (!lines.empty())

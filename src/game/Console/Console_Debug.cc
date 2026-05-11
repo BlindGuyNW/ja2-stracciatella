@@ -1,12 +1,16 @@
 #include "Console_Debug.h"
 
 #include "Console.h"
+#include "Console_Visibility.h"
 
 #include "Handle_Items.h"
 #include "Item_Types.h"
+#include "OppList.h"
 #include "Overhead.h"
+#include "Overhead_Types.h"
 #include "Render_Fun.h"
 #include "Soldier_Control.h"
+#include "Soldier_Macros.h"
 #include "Structure.h"
 #include "Structure_Internals.h"
 #include "WorldDef.h"
@@ -159,6 +163,69 @@ namespace
 		}
 	}
 
+	// Symbolic name for the opplist sighting value, with the numeric
+	// value appended so the user can see the raw byte.
+	const char* opplistName(INT8 v)
+	{
+		switch (v)
+		{
+			case NOT_HEARD_OR_SEEN:   return "NOT_HEARD_OR_SEEN";
+			case SEEN_CURRENTLY:      return "SEEN_CURRENTLY";
+			case SEEN_THIS_TURN:      return "SEEN_THIS_TURN";
+			case HEARD_THIS_TURN:     return "HEARD_THIS_TURN";
+		}
+		// SEEN_*_TURNS_AGO and HEARD_*_TURNS_AGO fall through; the
+		// numeric value (printed alongside) tells the story.
+		if (v > 0) return "SEEN_N_TURNS_AGO";
+		if (v < 0) return "HEARD_N_TURNS_AGO";
+		return "?";
+	}
+
+	// Lists every CIV_TEAM soldier in the slot table, regardless of any
+	// fog or sticky-memory filter. Use this to compare against `nearby c`
+	// and `room` — if a civ is in the census but not in those listings,
+	// look at the active/life/inSector/opp/sticky columns to see why.
+	void cmdDebugCivilians()
+	{
+		int total = 0;
+		FOR_EACH_MERC(it)
+		{
+			const SOLDIERTYPE& t = **it;
+			if (t.bTeam != CIV_TEAM) continue;
+			++total;
+		}
+		Console_Println(ST::format("Civilian census: {} CIV_TEAM soldiers.", total));
+		if (total == 0) return;
+
+		FOR_EACH_MERC(it)
+		{
+			const SOLDIERTYPE& t = **it;
+			if (t.bTeam != CIV_TEAM) continue;
+			const INT8 opp = gbPublicOpplist[OUR_TEAM][t.ubID];
+			const bool sticky = ConsoleVis::CivilianEverSeenHere(t.ubID);
+			ST::string stickyPart;
+			if (sticky)
+			{
+				const INT16 g = ConsoleVis::CivilianLastGridno(t.ubID);
+				stickyPart = ST::format(" sticky=yes last=({},{}) lvl{} t={}m",
+				                        g % WORLD_COLS, g / WORLD_COLS,
+				                        ConsoleVis::CivilianLastLevel(t.ubID),
+				                        ConsoleVis::CivilianLastSeenMin(t.ubID));
+			}
+			else
+			{
+				stickyPart = " sticky=no";
+			}
+			Console_Println(ST::format(
+				"  id={} {} at ({},{}) lvl{} active={} life={} inSector={} opp={}({}){}",
+				t.ubID, t.name,
+				t.sGridNo % WORLD_COLS, t.sGridNo / WORLD_COLS, t.bLevel,
+				t.bActive ? 1 : 0, t.bLife, t.bInSector ? 1 : 0,
+				opplistName(opp), static_cast<int>(opp),
+				stickyPart));
+		}
+	}
+
 	void cmdDebugWorld()
 	{
 		// Rough sanity check: did the world data load at all?
@@ -202,12 +269,15 @@ void Cmd_Debug(const std::vector<std::string>& args)
 		cmdDebugWorld();
 		cmdDebugStructures();
 		cmdDebugItems();
+		// civs deliberately omitted from "all" — it can be long (50+
+		// lines in a town) and is targeted at a specific question.
 		return;
 	}
 	if (sub == "structures" || sub == "structs") { cmdDebugStructures(); return; }
 	if (sub == "items")                          { cmdDebugItems();      return; }
 	if (sub == "world")                          { cmdDebugWorld();      return; }
+	if (sub == "civs" || sub == "civilians")     { cmdDebugCivilians();  return; }
 
 	Console_Println(ST::format(
-		"unknown debug topic '{}' (try: summary, structures, items, world)", sub));
+		"unknown debug topic '{}' (try: summary, structures, items, world, civs)", sub));
 }

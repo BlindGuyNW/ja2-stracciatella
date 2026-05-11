@@ -80,6 +80,20 @@ struct ListedSoldier
 {
 	SOLDIERTYPE* soldier;
 	INT16        distance;
+	// Tile to address this entry against — typically the soldier's
+	// current position (`soldier->sGridNo`). For decayed-out civilians
+	// we surface the last-known tile here so `cN` resolves to where the
+	// player last saw them, not the engine's current authoritative
+	// position. Default of -1 is a sentinel for "unset"; every
+	// enumerator must fill this field.
+	INT16        gridno      = -1;
+	// Civilians-only. True when this entry comes from
+	// ConsoleVis::CivilianEverSeenHere — i.e., the player remembers
+	// them but the public opplist has decayed. Hostiles and teammates
+	// leave these defaults.
+	bool         stale       = false;
+	UINT32       lastSeenMin = 0;
+	UINT16       animState   = 0;
 };
 
 void enumerateHostiles (const SOLDIERTYPE& observer, std::vector<ListedSoldier>& out);

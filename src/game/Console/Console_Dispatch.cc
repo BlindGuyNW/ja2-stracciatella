@@ -15,6 +15,7 @@
 #include "Console_Rows.h"
 #include "Console_Save.h"
 #include "Console_Text.h"
+#include "Console_Visibility.h"
 #include "Console_Web.h"
 
 #include "Console.h"
@@ -97,7 +98,7 @@ namespace
 		{ "g",         &Cmd_Gui,        "g list | g click <id> — enumerate or click visible buttons" },
 		{ "r",         &Cmd_Rows,       "r list | r click <id> — enumerate or click rendered text rows" },
 		{ "cheat",     &Cmd_Cheat,      "cheat | cheat <name> — dev unlocks (e.g. 'cheat bobbyr')"  },
-		{ "debug",     &Cmd_Debug,      "debug [summary|structures|items|world] — world-state diagnostics" },
+		{ "debug",     &Cmd_Debug,      "debug [summary|structures|items|world|civs] — world-state diagnostics" },
 	};
 
 	struct Alias { const char* from; const char* to; };
@@ -168,5 +169,6 @@ namespace
 
 void ConsoleDispatch_Tick(void)
 {
+	ConsoleVis::Tick();
 	Console_Drain(&dispatch);
 }
