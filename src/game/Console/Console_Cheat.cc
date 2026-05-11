@@ -1,9 +1,15 @@
 #include "Console_Cheat.h"
 
+#include "ContentManager.h"
 #include "EMail.h"
+#include "Explosion_Control.h"
 #include "Finances.h"
+#include "GameInstance.h"
 #include "Game_Clock.h"
 #include "Interface.h"
+#include "ItemModel.h"
+#include "Item_Types.h"
+#include "Items.h"
 #include "Laptop.h"
 #include "LaptopSave.h"
 #include "Overhead.h"
@@ -240,6 +246,195 @@ namespace
 			"'email unread' then 'email <id>'.");
 	}
 
+	// Resolve an item argument by case-insensitive prefix match against
+	// ItemModel::getInternalName (the uppercase-snake-case names from
+	// items.json: HAND_GRENADE, SHAPED_CHARGE, GLOCK_17, ...). A numeric
+	// arg resolves to the bare item ID. Returns NOTHING and writes a
+	// one-line reason on failure: not-found, ambiguous (lists matches),
+	// or out-of-range. Limits the ambiguous-match list to 8 names to
+	// keep the failure terse.
+	UINT16 resolveItemArg(const std::string& arg, ST::string& errOut)
+	{
+		long asNum;
+		if (parseInt(arg, asNum))
+		{
+			if (asNum < 1 || asNum >= MAXITEMS)
+			{
+				errOut = ST::format(
+					"item id {} out of range (1..{})", asNum, MAXITEMS - 1);
+				return NOTHING;
+			}
+			const ItemModel* it = GCM->getItem(static_cast<uint16_t>(asNum), ItemSystem::nothrow);
+			if (it == nullptr)
+			{
+				errOut = ST::format("no item with id {}", asNum);
+				return NOTHING;
+			}
+			return static_cast<UINT16>(asNum);
+		}
+
+		const std::string needle = lower(arg);
+		std::vector<UINT16> matches;
+		std::vector<ST::string> matchNames;
+		for (UINT16 i = 1; i < MAXITEMS; ++i)
+		{
+			const ItemModel* it = GCM->getItem(i, ItemSystem::nothrow);
+			if (it == nullptr) continue;
+			const ST::string& iname = it->getInternalName();
+			if (iname.empty()) continue;
+			if (startsWithCI(iname, needle))
+			{
+				matches.push_back(i);
+				matchNames.push_back(iname);
+				if (matches.size() == 1 && iname.size() == needle.size())
+				{
+					// Exact case-insensitive hit shortcuts ambiguity.
+					return i;
+				}
+			}
+		}
+		if (matches.empty())
+		{
+			errOut = ST::format("no item matches '{}'", arg);
+			return NOTHING;
+		}
+		if (matches.size() == 1) return matches[0];
+
+		ST::string sample;
+		const std::size_t n = std::min<std::size_t>(matchNames.size(), 8);
+		for (std::size_t i = 0; i < n; ++i)
+		{
+			if (i > 0) sample += ", ";
+			sample += matchNames[i];
+		}
+		if (matchNames.size() > n) sample += ST::format(", +{} more", matchNames.size() - n);
+		errOut = ST::format("'{}' matches {} items: {}", arg, matchNames.size(), sample);
+		return NOTHING;
+	}
+
+	// Materialize an item in the selected merc's inventory. The engine
+	// has CreateItem (factory: usItem -> OBJECTTYPE) and AutoPlaceObject
+	// (place into first viable slot, honoring slot affinity / pocket
+	// size); together they're the same path the editor's "give item"
+	// uses. Status defaults to 100. Count > 1 stacks for stackable items
+	// (ammo, grenades) and creates separate objects otherwise (one
+	// AutoPlaceObject call per object).
+	void cheatGive(const ArgList& args)
+	{
+		if (args.size() < 3)
+		{
+			Console_Println(
+				"usage: cheat give <item-name|id> [count]");
+			return;
+		}
+		SOLDIERTYPE* const sel = GetSelectedMan();
+		if (sel == nullptr)
+		{
+			Console_Println("No merc selected.");
+			return;
+		}
+
+		ST::string err;
+		const UINT16 idx = resolveItemArg(args[2], err);
+		if (idx == NOTHING)
+		{
+			Console_Println(err);
+			return;
+		}
+
+		long count = 1;
+		if (args.size() >= 4 && (!parseInt(args[3], count) || count < 1 || count > 250))
+		{
+			Console_Println(ST::format(
+				"usage: cheat give <item> [count=1..250]; got: {}", args[3]));
+			return;
+		}
+
+		const ItemModel* model = GCM->getItem(idx);
+		const ST::string name  = model ? model->getInternalName() : ST::string("?");
+
+		// CreateItems handles internal stacking for stackables (ammo,
+		// throwables); for non-stackables count > 1 still produces one
+		// object with bStatus=100. To get N distinct copies of a non-
+		// stackable, loop AutoPlaceObject N times.
+		UINT32 placed = 0;
+		for (long i = 0; i < count; ++i)
+		{
+			OBJECTTYPE obj{};
+			CreateItem(idx, 100, &obj);
+			if (AutoPlaceObject(sel, &obj, FALSE)) ++placed;
+		}
+		Console_Println(placed == 0
+			? ST::format("Couldn't place {} on {} — inventory full?", name, sel->name)
+			: ST::format("Gave {} x {} to {}.", name, placed, sel->name));
+	}
+
+	// Direct IgniteExplosion at a target tile, with selected merc as
+	// owner so attribution works through the damage log. Mostly a test
+	// tool for the structure / window / lock-blow paths so an SR
+	// developer can exercise them without first equipping inventory.
+	// Defaults to HAND_GRENADE; any IC_GRENADE / IC_BOMB item is
+	// accepted. Refuses non-explosives (rifle, medkit, etc.) so a
+	// typo doesn't crash IgniteExplosion's internal lookups.
+	void cheatBoom(const ArgList& args)
+	{
+		if (args.size() < 3)
+		{
+			Console_Println(
+				"usage: cheat boom <target> [item-name|id]");
+			return;
+		}
+		SOLDIERTYPE* const sel = GetSelectedMan();
+		if (sel == nullptr)
+		{
+			Console_Println("No merc selected.");
+			return;
+		}
+
+		// Reuse the standard address parser. Note: parseTarget consumes
+		// 1 or 2 tokens depending on grammar (name, tag, dir+steps,
+		// dir+steps+dir+steps, col,row), so the optional item arg sits
+		// after whatever it consumed.
+		Target tgt{};
+		ST::string err;
+		const int consumed = parseTarget(args, 2, sel, tgt, err);
+		if (consumed == 0)
+		{
+			Console_Println(err);
+			return;
+		}
+
+		UINT16 itemIdx = HAND_GRENADE;
+		if (args.size() > static_cast<std::size_t>(2 + consumed))
+		{
+			ST::string ierr;
+			const UINT16 i = resolveItemArg(args[2 + consumed], ierr);
+			if (i == NOTHING)
+			{
+				Console_Println(ierr);
+				return;
+			}
+			itemIdx = i;
+		}
+
+		const ItemModel* model = GCM->getItem(itemIdx);
+		if (model == nullptr || !model->isExplosive())
+		{
+			Console_Println(ST::format(
+				"'{}' is not an IC_GRENADE / IC_BOMB item; refusing to "
+				"detonate (would crash the explosion lookup).",
+				model ? model->getInternalName() : ST::string("?")));
+			return;
+		}
+
+		const INT8 level = static_cast<INT8>(gsInterfaceLevel);
+		IgniteExplosion(sel, 0, tgt.gridno, itemIdx, level);
+		Console_Println(ST::format(
+			"Boom: {} at gridno {} (owner: {}, level: {}).",
+			model->getInternalName(), tgt.gridno, sel->name,
+			level == 0 ? "ground" : "roof"));
+	}
+
 	struct Entry
 	{
 		const char* name;
@@ -256,6 +451,8 @@ namespace
 		{ "ap",       &cheatAp,       "ap — refill action points for the living team" },
 		{ "liberate", &cheatLiberate, "liberate <sector> — flip a sector to player control (no hostiles)" },
 		{ "impemail", &cheatImpEmail, "impemail — deliver the IMP profile-results email now (normally arrives day+2 at 07:00)" },
+		{ "give",     &cheatGive,     "give <item-name|id> [count] — materialize an item in the selected merc's inventory" },
+		{ "boom",     &cheatBoom,     "boom <target> [item-name|id] — ignite an explosion at a tile (default: HAND_GRENADE); selected merc as owner" },
 	};
 
 	void listCheats()
