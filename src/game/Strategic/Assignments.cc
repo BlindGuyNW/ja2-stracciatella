@@ -349,7 +349,7 @@ static BOOLEAN BasicCanCharacterDoctor(const SOLDIERTYPE* const s)
 
 // is character capable of 'playing' doctor?
 // check that character is alive, conscious, has medical skill and equipment
-static BOOLEAN CanCharacterDoctor(SOLDIERTYPE const* const pSoldier)
+BOOLEAN CanCharacterDoctor(SOLDIERTYPE const* const pSoldier)
 {
 	INT8 bPocket = 0;
 
@@ -538,7 +538,7 @@ static BOOLEAN CanCharacterRepairButDoesntHaveARepairkit(const SOLDIERTYPE* cons
 
 // can character be assigned as repairman?
 // check that character is alive, oklife, has repair skill, and equipment, etc.
-static BOOLEAN CanCharacterRepair(SOLDIERTYPE const* const pSoldier)
+BOOLEAN CanCharacterRepair(SOLDIERTYPE const* const pSoldier)
 {
 	if (!BasicCanCharacterRepair(pSoldier)) return FALSE;
 
@@ -563,7 +563,7 @@ static BOOLEAN CanCharacterRepair(SOLDIERTYPE const* const pSoldier)
 
 
 // can character be set to patient?
-static BOOLEAN CanCharacterPatient(const SOLDIERTYPE* const s)
+BOOLEAN CanCharacterPatient(const SOLDIERTYPE* const s)
 {
 	return
 		s->bLife > 0 &&
@@ -666,7 +666,7 @@ static INT8 GetTrainingStatValue(const SOLDIERTYPE* const s, const INT8 stat)
 
 
 // can character train stat?..as train self or as trainer?
-static BOOLEAN CanCharacterTrainStat(const SOLDIERTYPE* const s, INT8 bStat, const BOOLEAN fTrainSelf, const BOOLEAN fTrainTeammate)
+BOOLEAN CanCharacterTrainStat(const SOLDIERTYPE* const s, INT8 bStat, const BOOLEAN fTrainSelf, const BOOLEAN fTrainTeammate)
 {
 	// is the character capable of training this stat? either self or as trainer
 	// underground training is not allowed (code doesn't support and it's a reasonable enough limitation)
@@ -697,7 +697,7 @@ static BOOLEAN CanCharacterPractise(const SOLDIERTYPE* const s)
 
 
 // can this character train others?
-static BOOLEAN CanCharacterTrainTeammates(SOLDIERTYPE const* const pSoldier)
+BOOLEAN CanCharacterTrainTeammates(SOLDIERTYPE const* const pSoldier)
 {
 	// can character train at all
 	if (!CanCharacterPractise(pSoldier)) return FALSE;
@@ -713,7 +713,7 @@ static BOOLEAN CanCharacterTrainTeammates(SOLDIERTYPE const* const pSoldier)
 }
 
 
-static BOOLEAN CanCharacterBeTrainedByOther(SOLDIERTYPE const* const pSoldier)
+BOOLEAN CanCharacterBeTrainedByOther(SOLDIERTYPE const* const pSoldier)
 {
 	// can character train at all
 	if (!CanCharacterPractise(pSoldier)) return FALSE;
@@ -823,7 +823,7 @@ static BOOLEAN CanCharacterBeAwakened(SOLDIERTYPE* pSoldier, BOOLEAN fExplainWhy
 
 
 // put character in vehicle?
-static bool CanCharacterVehicle(SOLDIERTYPE const& s)
+bool CanCharacterVehicle(SOLDIERTYPE const& s)
 { // Can character enter/leave vehicle?
 	return
 		fInMapMode && // Strictly for visual reasons - we don't want them just vanishing if in tactical
@@ -5807,7 +5807,7 @@ void SetSoldierAssignmentHospital(SOLDIERTYPE& s)
 }
 
 
-static void SetSoldierAssignmentPatient(SOLDIERTYPE& s)
+void SetSoldierAssignmentPatient(SOLDIERTYPE& s)
 {
 	if (!CanCharacterPatient(&s)) return;
 	PreSetAssignment(s, PATIENT);
@@ -5816,7 +5816,7 @@ static void SetSoldierAssignmentPatient(SOLDIERTYPE& s)
 }
 
 
-static void SetSoldierAssignmentDoctor(SOLDIERTYPE& s)
+void SetSoldierAssignmentDoctor(SOLDIERTYPE& s)
 {
 	if (!CanCharacterDoctor(&s)) return;
 	PreSetAssignment(s, DOCTOR);
@@ -5826,7 +5826,7 @@ static void SetSoldierAssignmentDoctor(SOLDIERTYPE& s)
 }
 
 
-static void SetSoldierAssignmentTrainTown(SOLDIERTYPE& s)
+void SetSoldierAssignmentTrainTown(SOLDIERTYPE& s)
 {
 	if (!CanCharacterTrainMilitia(&s)) return;
 	PreSetAssignment(s, TRAIN_TOWN);
@@ -5841,7 +5841,7 @@ static void SetSoldierAssignmentTrainTown(SOLDIERTYPE& s)
 }
 
 
-static void SetSoldierAssignmentTrainSelf(SOLDIERTYPE& s, INT8 const stat)
+void SetSoldierAssignmentTrainSelf(SOLDIERTYPE& s, INT8 const stat)
 {
 	if (!CanCharacterTrainStat(&s, stat, TRUE, FALSE)) return;
 	PreSetAssignment(s, TRAIN_SELF);
@@ -5852,7 +5852,7 @@ static void SetSoldierAssignmentTrainSelf(SOLDIERTYPE& s, INT8 const stat)
 }
 
 
-static void SetSoldierAssignmentTrainTeammate(SOLDIERTYPE& s, INT8 const stat)
+void SetSoldierAssignmentTrainTeammate(SOLDIERTYPE& s, INT8 const stat)
 {
 	if (!CanCharacterTrainStat(&s, stat, FALSE, TRUE)) return;
 	PreSetAssignment(s, TRAIN_TEAMMATE);
@@ -5863,7 +5863,7 @@ static void SetSoldierAssignmentTrainTeammate(SOLDIERTYPE& s, INT8 const stat)
 }
 
 
-static void SetSoldierAssignmentTrainByOther(SOLDIERTYPE& s, INT8 const stat)
+void SetSoldierAssignmentTrainByOther(SOLDIERTYPE& s, INT8 const stat)
 {
 	if (!CanCharacterTrainStat(&s, stat, TRUE, FALSE)) return;
 	PreSetAssignment(s, TRAIN_BY_OTHER);

@@ -1,6 +1,7 @@
 #include "Console_Dispatch.h"
 #include "Console_Action.h"
 #include "Console_Aim.h"
+#include "Console_Assign.h"
 #include "Console_Battle.h"
 #include "Console_Bobbyr.h"
 #include "Console_Cheat.h"
@@ -81,6 +82,7 @@ namespace
 		{ "imp",       &Cmd_Imp,        "imp [goto|name|nickname|gender|question|answer|confirm|prev|next|traits|trait|stats|stat|portrait|voice|done|hire]" },
 		{ "bobbyr",    &Cmd_Bobbyr,     "bobbyr [list|show|add|remove|cart|clear|ship|speed|status|checkout|cancel|page|shipments|shipment]" },
 		{ "team",      &Cmd_Team,       "team | team list [filter] [sort] | team merc <name|tN> | team sleep <name|tN> <on|off>" },
+		{ "assign",    &Cmd_Assign,     "assign | assign list | assign <name|tN> | assign <name|tN> doctor|patient|repair [robot|vehicle <type>]|vehicle <type>|train self|town|teach|learn [<stat>]|squad <N>" },
 		{ "map",       &Cmd_Map,        "map | map sector <id> | map list <towns|mines|sams|militia|enemies> | map town <name> | map mine <town> | map level <0..3> | map move <sector> [from <name>] [keep-path] | map cancel [<name>]" },
 		{ "laptop",    &Cmd_Laptop,     "laptop — open the laptop screen"                        },
 		{ "tactical",  &Cmd_Tactical,   "tactical — switch to the tactical screen"               },

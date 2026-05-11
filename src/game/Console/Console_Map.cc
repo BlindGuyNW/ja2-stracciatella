@@ -34,6 +34,7 @@
 
 #include "Console.h"
 #include "Console_Address.h"
+#include "Console_Strategic.h"
 #include "SGP.h"
 
 #include <algorithm>
@@ -60,144 +61,12 @@ namespace
 		return lower(out);
 	}
 
-	// ----- gating ------------------------------------------------------
-	// Strategic data is meaningful only after a campaign has started.
-	// The engine truth is OUR_TEAM in Menptr; gCharactersList is a UI
-	// cache the mapscreen builds on entry, so it can be empty mid-tactical
-	// even with a full team. We walk OUR_TEAM for the gate, then refresh
-	// the cache so the rest of the verb code (which reads through
-	// gCharactersList) sees the same state the mapscreen would.
-	bool inCampaignGate()
-	{
-		bool any = false;
-		CFOR_EACH_IN_TEAM(s, OUR_TEAM) { any = true; break; }
-		if (!any)
-		{
-			Console_Println("No campaign loaded — start or load a game first.");
-			return false;
-		}
-		ReBuildCharactersList();
-		return true;
-	}
-
-	// Ask the engine to switch to mapscreen if the user is on tactical.
-	// Other screens (laptop, prebattle, options) have their own modal
-	// flows the user must back out of manually — the verb still prints
-	// its readout, only the screen swap is conditional.
-	void ensureMapscreen()
-	{
-		if (guiCurrentScreen == GAME_SCREEN)
-		{
-			// Wraps the boxing-in-progress check; pops the abandon
-			// dialog rather than tearing out of a fight.
-			GoToMapScreenFromTactical();
-		}
-	}
-
-	// ----- tN tag table ------------------------------------------------
-	// Stable mapping from t1..t20 to gCharactersList slot index. Re-built
-	// on each `team list` invocation. Indexed 0..N-1 (t1 is element 0).
-	// Vehicles fall in slots [FIRST_VEHICLE..MAX_CHARACTER_COUNT-1] per
-	// the engine convention; we tag them too so verbs that apply to
-	// vehicles (move, sector readout) can reach them.
-	std::vector<INT8> g_lastTags;
-
-	INT8 lookupTag(long n)
-	{
-		if (n < 1 || static_cast<std::size_t>(n) > g_lastTags.size()) return -1;
-		return g_lastTags[n - 1];
-	}
-
-	// Resolve <name|tN> to a slot index, or -1 with a reason in `err`.
-	// Match order: tN tag, exact name (case-insensitive), prefix name.
-	INT8 resolveCharSlot(const std::string& wantRaw, ST::string& err)
-	{
-		const std::string want = lower(wantRaw);
-		if (want.empty())
-		{
-			err = ST::string("missing name (try 'team list' for tags)");
-			return -1;
-		}
-
-		// tN — and bare digits (`1`, `2`...) so users who heard the tag
-		// in a list can echo it back without remembering the `t`.
-		{
-			std::string digits;
-			if (want[0] == 't' && want.size() >= 2)
-				digits = want.substr(1);
-			else
-				digits = want;
-			long n;
-			bool isDigits = !digits.empty();
-			for (char c : digits)
-				if (!std::isdigit(static_cast<unsigned char>(c))) { isDigits = false; break; }
-			if (isDigits && parseInt(digits, n))
-			{
-				const INT8 slot = lookupTag(n);
-				if (slot < 0)
-				{
-					err = ST::format(
-						"tag {} out of range (run 'team list' first; 1..{} valid)",
-						wantRaw, g_lastTags.size());
-					return -1;
-				}
-				return slot;
-			}
-		}
-
-		INT8        exactSlot  = -1;
-		INT8        prefixSlot = -1;
-		std::size_t prefixHits = 0;
-
-		for (INT8 i = 0; i < MAX_CHARACTER_COUNT; ++i)
-		{
-			const SOLDIERTYPE* const s = gCharactersList[i].merc;
-			if (!s) continue;
-			const std::string n = lower(s->name.to_std_string());
-			if (n.empty()) continue;
-			if (n == want) { exactSlot = i; }
-			if (n.rfind(want, 0) == 0)
-			{
-				prefixSlot = i;
-				++prefixHits;
-			}
-		}
-
-		if (exactSlot >= 0) return exactSlot;
-		if (prefixHits == 1) return prefixSlot;
-		if (prefixHits > 1)
-			err = ST::format("ambiguous name: {} (try 'team list')", wantRaw);
-		else
-			err = ST::format("no merc named: {} (try 'team list')", wantRaw);
-		return -1;
-	}
-
-	// ----- merc-state bucketing ---------------------------------------
-
+	// Vehicle slots live at the tail of gCharactersList per the engine's
+	// MAX_CHARACTER_COUNT / FIRST_VEHICLE convention. The other state
+	// helpers (gate, mapscreen swap, tN tags, alive / in-transit / POW /
+	// on-squad / on-assignment buckets, squad-number decode) all hoisted
+	// to Console_Strategic so team and assign verbs share them.
 	bool isVehicleSlot(INT8 slot) { return slot >= FIRST_VEHICLE; }
-
-	bool isAlive(const SOLDIERTYPE& s)    { return s.bLife > 0 && s.bAssignment != ASSIGNMENT_DEAD; }
-	bool isInTransit(const SOLDIERTYPE& s) { return s.bAssignment == IN_TRANSIT; }
-	bool isAsleep(const SOLDIERTYPE& s)   { return s.fMercAsleep; }
-	bool isPOW(const SOLDIERTYPE& s)      { return s.bAssignment == ASSIGNMENT_POW; }
-
-	// "On-duty" in the user's mental model: assigned to a squad or to
-	// ON_DUTY itself. Anything past ON_DUTY in the assignment enum
-	// (DOCTOR / PATIENT / VEHICLE / REPAIR / TRAIN_*) is a non-combat
-	// assignment.
-	bool isOnSquad(const SOLDIERTYPE& s)
-	{
-		return s.bAssignment >= SQUAD_1 && s.bAssignment <= ON_DUTY;
-	}
-	bool isOnNonCombatAssignment(const SOLDIERTYPE& s)
-	{
-		return s.bAssignment > ON_DUTY && s.bAssignment != IN_TRANSIT &&
-		       s.bAssignment != ASSIGNMENT_DEAD && s.bAssignment != ASSIGNMENT_POW;
-	}
-
-	// Squad number (1..20) for soldiers on a squad assignment. Caller
-	// should check isOnSquad first.
-	int squadNumber(const SOLDIERTYPE& s) { return s.bAssignment - SQUAD_1 + 1; }
 
 	enum class Urgency { Safe, Warning, Critical, NA };
 
@@ -245,7 +114,12 @@ namespace
 	{
 		const ST::string name = s.name;
 		const ST::string loc  = GetMapscreenMercLocationString(s);
-		const ST::string asg  = GetMapscreenMercAssignmentString(s);
+		// Sleep is a flag orthogonal to bAssignment — the engine's
+		// assignment string would still say "Practice" / "Doctor" while
+		// the merc is snoring. Suffix the row so the SR user hears the
+		// disconnect instead of being misled.
+		ST::string asg = GetMapscreenMercAssignmentString(s);
+		if (Console_IsAsleep(s)) asg += " (asleep)";
 		// Departure string — verbose word, not engine abbreviation.
 		ST::string contract;
 		if (s.ubWhatKindOfMercAmI == MERC_TYPE__AIM_MERC || s.ubProfile == SLAY)
@@ -274,7 +148,7 @@ namespace
 
 	void cmdTeamSummary()
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 
 		std::size_t total = 0, active = 0, transit = 0, asleep = 0;
 		std::size_t assignment = 0, pow = 0;
@@ -285,11 +159,11 @@ namespace
 		{
 			const SOLDIERTYPE& s = *c->merc;
 			++total;
-			if (!isAlive(s)) continue;
-			if (isPOW(s)) { ++pow; continue; }
-			if (isInTransit(s)) ++transit;
-			else if (isAsleep(s)) ++asleep;
-			else if (isOnNonCombatAssignment(s)) ++assignment;
+			if (!Console_IsAlive(s)) continue;
+			if (Console_IsPOW(s)) { ++pow; continue; }
+			if (Console_IsInTransit(s)) ++transit;
+			else if (Console_IsAsleep(s)) ++asleep;
+			else if (Console_IsOnNonCombatAssignment(s)) ++assignment;
 			else ++active;
 
 			if (s.ubWhatKindOfMercAmI == MERC_TYPE__AIM_MERC || s.ubProfile == SLAY)
@@ -343,15 +217,15 @@ namespace
 			case Filter::All:
 				return true;
 			case Filter::Active:
-				return isAlive(s) && !isInTransit(s) && !isPOW(s);
+				return Console_IsAlive(s) && !Console_IsInTransit(s) && !Console_IsPOW(s);
 			case Filter::Assigned:
-				return isAlive(s) && isOnNonCombatAssignment(s);
+				return Console_IsAlive(s) && Console_IsOnNonCombatAssignment(s);
 			case Filter::Asleep:
-				return isAlive(s) && isAsleep(s);
+				return Console_IsAlive(s) && Console_IsAsleep(s);
 			case Filter::Travelling:
-				return isAlive(s) && isInTransit(s);
+				return Console_IsAlive(s) && Console_IsInTransit(s);
 			case Filter::ContractSoon:
-				return isAlive(s) && contractUrgency(s) != Urgency::Safe &&
+				return Console_IsAlive(s) && contractUrgency(s) != Urgency::Safe &&
 				       contractUrgency(s) != Urgency::NA;
 		}
 		return false;
@@ -386,7 +260,7 @@ namespace
 
 	void cmdTeamList(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 
 		Filter  filter = Filter::Active;
 		SortKey sort   = SortKey::Slot;
@@ -452,15 +326,13 @@ namespace
 
 		// Re-tag in display order. tN tags reflect the rows the user just
 		// saw, which means subsequent `team merc t3` resolves against
-		// what they heard.
-		g_lastTags.clear();
-		g_lastTags.reserve(slots.size());
+		// what they heard. The tag table is shared with `assign list`
+		// via Console_Strategic, so either roster wins the namespace.
+		Console_RegisterTeamTags(slots);
 		for (INT8 slot : slots)
 		{
-			g_lastTags.push_back(slot);
 			Console_Println(mercRow(slot, *gCharactersList[slot].merc));
 		}
-
 	}
 
 	// ----- team merc --------------------------------------------------
@@ -482,7 +354,7 @@ namespace
 
 	void cmdTeamMerc(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 
 		INT8 slot;
 		if (args.size() < 3)
@@ -506,7 +378,7 @@ namespace
 		else
 		{
 			ST::string err;
-			slot = resolveCharSlot(joinFrom(args, 2), err);
+			slot = Console_ResolveCharSlot(joinFrom(args, 2), err);
 			if (slot < 0) { Console_Println(err); return; }
 		}
 
@@ -528,8 +400,8 @@ namespace
 		const ST::string asg  = GetMapscreenMercAssignmentString(s);
 		const ST::string dest = GetMapscreenMercDestinationString(s);
 		ST::string statusLine = ST::format("  Sector: {}.  ", loc);
-		if (isOnSquad(s))
-			statusLine += ST::format("Squad {}.  ", squadNumber(s));
+		if (Console_IsOnSquad(s))
+			statusLine += ST::format("Squad {}.  ", Console_SquadNumber(s));
 		statusLine += ST::format("Assignment: {}.", asg);
 		Console_Println(statusLine);
 		if (!dest.empty() && dest != loc)
@@ -562,7 +434,7 @@ namespace
 			"  Health: life {}/{}, breath {}/{}. Morale: {}.",
 			s.bLife, s.bLifeMax, s.bBreath, s.bBreathMax,
 			GetMoraleString(s)));
-		if (isAsleep(s))
+		if (Console_IsAsleep(s))
 			Console_Println("  Sleep: asleep.");
 		else if (s.bBreathMax <= BREATHMAX_PRETTY_TIRED)
 			Console_Println("  Sleep: tired (breath max reduced).");
@@ -664,7 +536,7 @@ namespace
 
 	void cmdMapView()
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		const ST::string sel = GetSectorIDString(sSelMap, FALSE);
 		Console_Println(ST::format(
 			"Selected sector: {}. Z-level: {}. Time {02d}:{02d}, day {}. Compression: {}.",
@@ -731,7 +603,7 @@ namespace
 
 	void cmdMapSector(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		if (args.size() < 3)
 		{
 			Console_Println("usage: map sector <id|town|here>");
@@ -865,7 +737,7 @@ namespace
 
 	void cmdMapListTowns()
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		Console_Println("Towns:");
 		for (auto const& kv : GCM->getTowns())
 		{
@@ -884,7 +756,7 @@ namespace
 
 	void cmdMapListMines()
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		const auto& mines = GCM->getMines();
 		Console_Println(ST::format("Mines ({}):", mines.size()));
 		for (std::size_t i = 0; i < mines.size(); ++i)
@@ -893,7 +765,7 @@ namespace
 
 	void cmdMapListSams()
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		// SAM sectors aren't listed centrally — iterate the surface grid.
 		Console_Println("SAM sites:");
 		std::size_t shown = 0;
@@ -916,7 +788,7 @@ namespace
 
 	void cmdMapListMilitia()
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		Console_Println("Sectors with militia:");
 		std::size_t shown = 0;
 		for (INT16 y = 1; y <= 16; ++y)
@@ -934,7 +806,7 @@ namespace
 
 	void cmdMapListEnemies()
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		std::vector<SGPSector> known, partial;
 		for (INT16 y = 1; y <= 16; ++y)
 		for (INT16 x = 1; x <= 16; ++x)
@@ -962,7 +834,7 @@ namespace
 
 	void cmdMapTown(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		if (args.size() < 3)
 		{
 			Console_Println("usage: map town <name>");
@@ -1018,7 +890,7 @@ namespace
 
 	void cmdMapMine(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		if (args.size() < 3)
 		{
 			Console_Println("usage: map mine <town>");
@@ -1075,14 +947,14 @@ namespace
 
 	void cmdTeamSleep(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		if (args.size() < 4)
 		{
 			Console_Println("usage: team sleep <name|tN> <on|off>");
 			return;
 		}
 		ST::string err;
-		const INT8 slot = resolveCharSlot(args[2], err);
+		const INT8 slot = Console_ResolveCharSlot(args[2], err);
 		if (slot < 0) { Console_Println(err); return; }
 		SOLDIERTYPE& s = *gCharactersList[slot].merc;
 
@@ -1127,7 +999,7 @@ namespace
 
 	void cmdMapLevel(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		if (args.size() < 3)
 		{
 			Console_Println(ST::format(
@@ -1183,7 +1055,7 @@ namespace
 		{
 			if (lower(args[i]) == "from")
 			{
-				return resolveCharSlot(args[i + 1], err);
+				return Console_ResolveCharSlot(args[i + 1], err);
 			}
 		}
 		const SOLDIERTYPE* const focus = GetSelectedInfoChar();
@@ -1241,7 +1113,7 @@ namespace
 
 	void cmdMapMove(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		if (args.size() < 3)
 		{
 			Console_Println(
@@ -1321,9 +1193,9 @@ namespace
 		// squad to a far-off sector — choose any merc in that squad."
 		// The handle merc is a stand-in; the whole squad goes.
 		ST::string who;
-		if (isOnSquad(s))
+		if (Console_IsOnSquad(s))
 		{
-			const int sq = squadNumber(s);
+			const int sq = Console_SquadNumber(s);
 			ST::string members;
 			// Squad[] entries can be null — the engine's FOR_EACH_IN_SQUAD
 			// macro guards on `if (!*iter) continue` for the same reason.
@@ -1349,7 +1221,7 @@ namespace
 
 	void cmdMapCancel(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 
 		// No arg: cancel for the focused merc's squad (mirrors map move's
 		// default-handle model). With <name>: cancel for that merc's squad.
@@ -1376,7 +1248,7 @@ namespace
 		else
 		{
 			ST::string err;
-			slot = resolveCharSlot(joinFrom(args, 2), err);
+			slot = Console_ResolveCharSlot(joinFrom(args, 2), err);
 			if (slot < 0) { Console_Println(err); return; }
 		}
 
@@ -1387,8 +1259,8 @@ namespace
 			return;
 		}
 		CancelPathForCharacter(&s);
-		Console_Println(isOnSquad(s)
-			? ST::format("Squad {}: path cancelled.", squadNumber(s))
+		Console_Println(Console_IsOnSquad(s)
+			? ST::format("Squad {}: path cancelled.", Console_SquadNumber(s))
 			: ST::format("{}: path cancelled.", s.name));
 	}
 
@@ -1398,7 +1270,7 @@ namespace
 
 	void cmdCompress(const std::vector<std::string>& args)
 	{
-		if (!inCampaignGate()) return;
+		if (!Console_RequireCampaign()) return;
 		if (args.size() < 2)
 		{
 			Console_Println(ST::format(
@@ -1524,7 +1396,7 @@ namespace
 
 void Cmd_Team(const std::vector<std::string>& args)
 {
-	ensureMapscreen();
+	Console_EnsureMapscreen();
 	if (args.size() < 2) { cmdTeamSummary(); return; }
 	const std::string sub = lower(args[1]);
 	if (sub == "list")   { cmdTeamList(args);   return; }
@@ -1560,7 +1432,7 @@ void Cmd_Laptop(const std::vector<std::string>&)
 
 void Cmd_Map(const std::vector<std::string>& args)
 {
-	ensureMapscreen();
+	Console_EnsureMapscreen();
 	if (args.size() < 2) { cmdMapView(); return; }
 	const std::string sub = lower(args[1]);
 	if (sub == "sector") { cmdMapSector(args); return; }

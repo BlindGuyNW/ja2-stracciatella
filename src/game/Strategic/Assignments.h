@@ -175,6 +175,26 @@ void CreateDestroyAssignmentPopUpBoxes();
 void SetSoldierAssignmentHospital(SOLDIERTYPE&);
 void SetSoldierAssignmentRepair(SOLDIERTYPE&, BOOLEAN robot, INT8 vehicle_id);
 
+// Per-kind setters and eligibility checks for the assignment system.
+// Exposed alongside SetSoldierAssignmentHospital / SetSoldierAssignmentRepair
+// so the console (`assign` verb) can drive assignment changes the same way the
+// mapscreen menu does — by calling the engine's own routing rather than poking
+// SOLDIERTYPE fields directly.
+void SetSoldierAssignmentDoctor       (SOLDIERTYPE&);
+void SetSoldierAssignmentPatient      (SOLDIERTYPE&);
+void SetSoldierAssignmentTrainTown    (SOLDIERTYPE&);
+void SetSoldierAssignmentTrainSelf    (SOLDIERTYPE&, INT8 stat);
+void SetSoldierAssignmentTrainTeammate(SOLDIERTYPE&, INT8 stat);
+void SetSoldierAssignmentTrainByOther (SOLDIERTYPE&, INT8 stat);
+
+BOOLEAN CanCharacterDoctor (SOLDIERTYPE const*);
+BOOLEAN CanCharacterPatient(SOLDIERTYPE const*);
+BOOLEAN CanCharacterRepair (SOLDIERTYPE const*);
+bool    CanCharacterVehicle(SOLDIERTYPE const&);
+BOOLEAN CanCharacterTrainStat(SOLDIERTYPE const*, INT8 stat, BOOLEAN train_self, BOOLEAN train_teammate);
+BOOLEAN CanCharacterTrainTeammates(SOLDIERTYPE const*);
+BOOLEAN CanCharacterBeTrainedByOther(SOLDIERTYPE const*);
+
 // set merc asleep and awake under the new sleep system implemented June 29, 1998
 // if give warning is false, the function can be used as an internal function
 BOOLEAN SetMercAwake( SOLDIERTYPE *pSoldier, BOOLEAN fGiveWarning, BOOLEAN fForceHim );

@@ -5,6 +5,7 @@ set(JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Action.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Address.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Aim.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Assign.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Battle.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Bobbyr.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Cheat.cc
@@ -18,6 +19,7 @@ set(JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Query.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Rows.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Save.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Strategic.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Text.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Visibility.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Web.cc
