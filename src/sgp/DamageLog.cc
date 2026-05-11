@@ -30,6 +30,12 @@ const Record* Get(UINT32 newest_index)
 	return &g_buf[raw];
 }
 
+const Record* PeekNewest(void)
+{
+	if (g_total == 0) return nullptr;
+	return &g_buf[(g_total - 1) % kCapacity];
+}
+
 void Reset(void)
 {
 	g_total = 0;
