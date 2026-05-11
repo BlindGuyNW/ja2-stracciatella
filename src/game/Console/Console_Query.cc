@@ -537,6 +537,131 @@ namespace
 		                  roomSuffix(observer, c.gridno));
 	}
 
+	// Destructibles: features the damage system can actually break --
+	// walls, windows, fences, trees, vehicles, explosive props. Doors
+	// and containers have their own categories (`d` / `k`); switches /
+	// lights / generic furniture are theoretically destructible but
+	// rarely tactically interesting, so we omit them to keep the list
+	// tight. The classification mirrors DamageLog's NounClass for the
+	// HP-bearing kinds and adds a "window" pseudo-noun for STRUCTURE_
+	// WALLNWINDOW (handled by WindowHit, not DamageStructure -- see
+	// DamageLog_Hooks.cc:ClassifyNoun).
+	enum class DestNoun : UINT8
+	{
+		Wall, Window, Fence, Tree, Vehicle, Explosive
+	};
+
+	struct ListedDestructible
+	{
+		INT16    distance;
+		INT16    gridno;
+		DestNoun noun;
+		UINT8    material; // gubMaterialArmour index, 0 if N/A
+	};
+
+	const char* destNounWord(DestNoun n)
+	{
+		switch (n)
+		{
+			case DestNoun::Wall:      return "wall";
+			case DestNoun::Window:    return "window";
+			case DestNoun::Fence:     return "fence";
+			case DestNoun::Tree:      return "tree";
+			case DestNoun::Vehicle:   return "vehicle";
+			case DestNoun::Explosive: return "explosive prop";
+		}
+		return "structure";
+	}
+
+	const char* destMaterialAdjective(UINT8 material)
+	{
+		switch (material)
+		{
+			case MATERIAL_WOOD_WALL:    return "wooden";
+			case MATERIAL_PLYWOOD_WALL: return "plywood";
+			case MATERIAL_STONE:        return "stone";
+			case MATERIAL_CONCRETE1:    return "concrete";
+			case MATERIAL_CONCRETE2:    return "concrete";
+			case MATERIAL_ROCK:         return "rock";
+			case MATERIAL_LIGHT_METAL:  return "metal";
+			case MATERIAL_THICKER_METAL: return "metal";
+			case MATERIAL_HEAVY_METAL:  return "heavy metal";
+			default:                    return "";
+		}
+	}
+
+	// Classify a single base-tile structure into a DestNoun, or return
+	// false if the structure isn't a destructible we want to surface.
+	// Order matters: STRUCTURE_EXPLOSIVE wins over WALLSTUFF because gas
+	// tanks and red barrels can carry wallstuff bits in the engine data
+	// (matches DamageLog_Hooks.cc:ClassifyNoun's ordering). Doors and
+	// containers are handled by their own categories so we exclude
+	// STRUCTURE_ANYDOOR and OPENABLE.
+	bool classifyDestructible(STRUCTURE const* s, DestNoun& out)
+	{
+		if (s == nullptr) return false;
+		const UINT32 f = s->fFlags;
+		if (f & (STRUCTURE_PERSON | STRUCTURE_CORPSE)) return false;
+		if (f & STRUCTURE_ANYDOOR)                     return false;
+		if (f & STRUCTURE_EXPLOSIVE)   { out = DestNoun::Explosive; return true; }
+		if (f & STRUCTURE_VEHICLE)     { out = DestNoun::Vehicle;   return true; }
+		if (f & STRUCTURE_TREE)        { out = DestNoun::Tree;      return true; }
+		if (f & (STRUCTURE_FENCE | STRUCTURE_WIREFENCE))
+		                               { out = DestNoun::Fence;     return true; }
+		if (f & STRUCTURE_WALLNWINDOW) { out = DestNoun::Window;    return true; }
+		if (f & STRUCTURE_WALLSTUFF)   { out = DestNoun::Wall;      return true; }
+		// Plain STRUCTURE_OPENABLE without WALLSTUFF/etc. is a container;
+		// already covered by `nearby containers`. Plain STRUCTURE_GENERIC
+		// is everything else (signs, decorations) -- skip to keep the
+		// list focused on tactically-interesting destruction targets.
+		return false;
+	}
+
+	// Same visibility gate as containers (interior loot is roof-hidden
+	// for sighted players). Walls, fences, trees, and gas tanks are
+	// usually outdoors so this rarely over-filters; for indoor walls
+	// the user can move closer and re-scan, which matches sighted play.
+	void enumerateDestructibles(const SOLDIERTYPE& observer, std::vector<ListedDestructible>& out)
+	{
+		for (INT16 g = 0; g < WORLD_MAX; ++g)
+		{
+			if (!ConsoleVis::IsKnownTile(g, 0)) continue;
+			for (STRUCTURE* s = gpWorldLevelData[g].pStructureHead; s; s = s->pNext)
+			{
+				if (!(s->fFlags & STRUCTURE_BASE_TILE)) continue;
+				DestNoun n;
+				if (!classifyDestructible(s, n)) continue;
+				ListedDestructible d{};
+				d.distance = SpacesAway(observer.sGridNo, g);
+				d.gridno   = g;
+				d.noun     = n;
+				d.material = (s->pDBStructureRef && s->pDBStructureRef->pDBStructure)
+				             ? s->pDBStructureRef->pDBStructure->ubArmour
+				             : MATERIAL_NOTHING;
+				out.push_back(d);
+				break; // one entry per tile; multiple structures per tile collapse to the headline
+			}
+		}
+		std::sort(out.begin(), out.end(),
+			[](const ListedDestructible& a, const ListedDestructible& b)
+			{
+				if (a.distance != b.distance) return a.distance < b.distance;
+				return a.gridno < b.gridno;
+			});
+	}
+
+	ST::string formatDestructibleLine(const ListedDestructible& d, std::size_t tagN, const SOLDIERTYPE& observer)
+	{
+		const char* const adj  = destMaterialAdjective(d.material);
+		const char* const noun = destNounWord(d.noun);
+		ST::string label = adj[0] != '\0'
+			? ST::format("{} {}", adj, noun)
+			: ST::string(noun);
+		return ST::format("  v{} {}: {}{}",
+		                  tagN, formatOffset(observer.sGridNo, d.gridno),
+		                  label, roomSuffix(observer, d.gridno));
+	}
+
 	ST::string formatDoorLine(const ListedDoor& d, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
 		const char* state = d.perceivedKnown
@@ -1131,24 +1256,30 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 	const bool isDefault = filter.empty();
 	const bool isAll     = (filter == "all");
 
-	const bool wantEnemies    = isDefault || isAll || filter == "enemies";
-	const bool wantMercs      = isDefault || isAll || filter == "mercs";
-	const bool wantCivilians  = isDefault || isAll || filter == "civilians" || filter == "civs";
-	const bool wantHazards    = isDefault || isAll || filter == "hazards";
-	const bool wantMines      = isDefault || isAll || filter == "mines";
-	const bool wantBombs      = isDefault || isAll || filter == "bombs";
-	const bool wantItems      = isAll || filter == "items";
-	const bool wantDoors      = isAll || filter == "doors";
-	const bool wantContainers = isAll || filter == "containers";
-	const bool wantExits      = isAll || filter == "exits";
-	const bool wantUnexplored = (filter == "unexplored" || filter == "unknown");
+	const bool wantEnemies       = isDefault || isAll || filter == "enemies";
+	const bool wantMercs         = isDefault || isAll || filter == "mercs";
+	const bool wantCivilians     = isDefault || isAll || filter == "civilians" || filter == "civs";
+	const bool wantHazards       = isDefault || isAll || filter == "hazards";
+	const bool wantMines         = isDefault || isAll || filter == "mines";
+	const bool wantBombs         = isDefault || isAll || filter == "bombs";
+	const bool wantItems         = isAll || filter == "items";
+	const bool wantDoors         = isAll || filter == "doors";
+	const bool wantContainers    = isAll || filter == "containers";
+	const bool wantExits         = isAll || filter == "exits";
+	// Destructibles (walls/windows/fences/trees/vehicles/explosive props)
+	// stay opt-in like doors/containers — on a town map they balloon and
+	// drown the combat picture. `nearby all` includes them. `dest` and
+	// `destructables` are accepted as friendlier aliases.
+	const bool wantDestructibles = isAll || filter == "destructibles" ||
+	                               filter == "destructables" || filter == "dest";
+	const bool wantUnexplored    = (filter == "unexplored" || filter == "unknown");
 
 	if (!wantEnemies && !wantMercs && !wantItems && !wantDoors && !wantContainers &&
 	    !wantCivilians && !wantExits && !wantHazards && !wantMines && !wantBombs &&
-	    !wantUnexplored)
+	    !wantDestructibles && !wantUnexplored)
 	{
 		Console_Println(ST::format(
-			"unknown filter '{}' (try: enemies, mercs, civs, items, doors, containers, exits, hazards, mines, bombs, unexplored, all)",
+			"unknown filter '{}' (try: enemies, mercs, civs, items, doors, containers, exits, hazards, mines, bombs, destructibles, unexplored, all)",
 			filter));
 		return;
 	}
@@ -1163,6 +1294,8 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 	if (wantHazards)    printNearbyCategory<ListedHazard>   (*observer, maxDist, "Hazards",          enumerateHazards,      formatHazardLine);
 	if (wantMines)      printNearbyCategory<ListedMine>     (*observer, maxDist, "Mines",            enumerateMines,        formatMineLine);
 	if (wantBombs)      printNearbyCategory<ListedBomb>     (*observer, maxDist, "Placed bombs",     enumerateBombs,        formatBombLine);
+	if (wantDestructibles)
+		printNearbyCategory<ListedDestructible>(*observer, maxDist, "Destructibles", enumerateDestructibles, formatDestructibleLine);
 	if (wantUnexplored)
 	{
 		// Frontiers carry a preamble (% explored) and a fully-explored
@@ -1263,6 +1396,7 @@ namespace ConsoleTags
 			case 'z': return resolveTileCategory<ListedHazard>   (observer, idx, out, listSize, enumerateHazards);
 			case 'b': return resolveTileCategory<ListedMine>     (observer, idx, out, listSize, enumerateMines);
 			case 'p': return resolveTileCategory<ListedBomb>     (observer, idx, out, listSize, enumerateBombs);
+			case 'v': return resolveTileCategory<ListedDestructible>(observer, idx, out, listSize, enumerateDestructibles);
 			case 'u':
 			{
 				// Frontiers need a two-step build: scan, then flatten +
@@ -1298,6 +1432,7 @@ namespace ConsoleTags
 			case 'b': return "mines";
 			case 'p': return "placed bombs";
 			case 'u': return "unexplored frontiers";
+			case 'v': return "destructibles";
 		}
 		return nullptr;
 	}
