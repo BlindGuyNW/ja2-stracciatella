@@ -39,6 +39,7 @@
 #include "Quests.h"
 #include "Map_Screen_Interface_Border.h"
 #include "Cheats.h"
+#include "Console_Battle.h"
 #include "SAM_Sites.h"
 #include "Soldier_Macros.h"
 #include "Squads.h"
@@ -522,6 +523,8 @@ set_help:
 	EnableDisAbleMapScreenOptionsButton(FALSE);
 
 	SetMusicMode(MUSIC_TACTICAL_ENEMYPRESENT);
+
+	Console_AnnouncePreBattle();
 
 	DoTransitionFromMapscreenToPreBattleInterface();
 }
