@@ -142,7 +142,15 @@ extern INT8 ArmourVersusExplosivesPercent( SOLDIERTYPE * pSoldier );
 FireWeaponResult FireWeapon(SOLDIERTYPE * pSoldier, GridNo sTargetGridNo);
 void WeaponHit(SOLDIERTYPE* target, UINT16 usWeaponIndex, INT16 sDamage, INT16 sBreathLoss, UINT16 usDirection, INT16 sXPos, INT16 sYPos, INT16 sZPos, INT16 sRange, SOLDIERTYPE* attacker, UINT8 ubSpecial, UINT8 ubHitLocation);
 void StructureHit(BULLET* b, UINT16 usStructureID, INT32 iImpact, BOOLEAN fStopped);
-extern void WindowHit( INT16 sGridNo, UINT16 usStructureID, BOOLEAN fBlowWindowSouth, BOOLEAN fLargeForce );
+// Return code for WindowHit. The caller pushes the damage-log entry
+// itself with whatever cause/actor info it has in scope -- WindowHit
+// doesn't take an actor arg because the four callers each have
+// different actor sources and inferring cause from a generic arg list
+// turned messy. WINDOW_NO_CHANGE means no partner swap happened (e.g.
+// structure already missing); the partner-chain is intact->cracked->
+// shattered, so WINDOW_SHATTERED is the terminal state.
+enum WindowHitResult { WINDOW_NO_CHANGE = 0, WINDOW_CRACKED = 1, WINDOW_SHATTERED = 2 };
+extern WindowHitResult WindowHit( INT16 sGridNo, UINT16 usStructureID, BOOLEAN fBlowWindowSouth, BOOLEAN fLargeForce );
 extern INT32 BulletImpact( SOLDIERTYPE *pFirer, SOLDIERTYPE * pTarget, UINT8 ubHitLocation, INT32 iImpact, INT16 sHitBy, UINT8 * pubSpecial );
 BOOLEAN InRange(const SOLDIERTYPE* pSoldier, INT16 sGridNo);
 void ShotMiss(const BULLET* b);

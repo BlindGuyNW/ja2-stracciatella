@@ -1802,7 +1802,7 @@ void StructureHit(BULLET* const pBullet, const UINT16 usStructureID, const INT32
 	}
 }
 
-void WindowHit( INT16 sGridNo, UINT16 usStructureID, BOOLEAN fBlowWindowSouth, BOOLEAN fLargeForce )
+WindowHitResult WindowHit( INT16 sGridNo, UINT16 usStructureID, BOOLEAN fBlowWindowSouth, BOOLEAN fLargeForce )
 {
 	STRUCTURE      *pWallAndWindow;
 	DB_STRUCTURE   *pWallAndWindowInDB;
@@ -1823,13 +1823,13 @@ void WindowHit( INT16 sGridNo, UINT16 usStructureID, BOOLEAN fBlowWindowSouth, B
 	pWallAndWindow = FindStructureByID( sGridNo, usStructureID );
 	if (pWallAndWindow == NULL)
 	{
-		return;
+		return WINDOW_NO_CHANGE;
 	}
 
 	pWallAndWindow = SwapStructureForPartner(pWallAndWindow);
 	if (pWallAndWindow == NULL)
 	{
-		return;
+		return WINDOW_NO_CHANGE;
 	}
 
 	// record window smash
@@ -1853,18 +1853,26 @@ void WindowHit( INT16 sGridNo, UINT16 usStructureID, BOOLEAN fBlowWindowSouth, B
 		}
 	}
 
+	// Disposition for the damage-log caller. The partner chain is
+	// intact -> cracked -> shattered, and NO_PARTNER_STRUCTURE in
+	// bPartnerDelta means we're on the terminal stage with nowhere
+	// further to swap. Cracked otherwise.
+	const WindowHitResult result =
+		(pWallAndWindowInDB->bPartnerDelta == NO_PARTNER_STRUCTURE)
+			? WINDOW_SHATTERED : WINDOW_CRACKED;
+
 	SetRenderFlags( RENDER_FLAG_FULL );
 
 	if (pWallAndWindowInDB->ubArmour == MATERIAL_THICKER_METAL_WITH_SCREEN_WINDOWS)
 	{
 		// don't play any sort of animation or sound
-		return;
+		return result;
 	}
 
 	if (pWallAndWindowInDB->bPartnerDelta != NO_PARTNER_STRUCTURE  )
 	{ // just cracked; don't display the animation
 		MakeNoise(NULL, sGridNo, 0, WINDOW_CRACK_VOLUME, NOISE_BULLET_IMPACT);
-		return;
+		return result;
 	}
 	MakeNoise(NULL, sGridNo, 0, WINDOW_SMASH_VOLUME, NOISE_BULLET_IMPACT);
 	if (pWallAndWindowInDB->ubWallOrientation == INSIDE_TOP_RIGHT || pWallAndWindowInDB->ubWallOrientation == OUTSIDE_TOP_RIGHT)
@@ -1922,6 +1930,8 @@ void WindowHit( INT16 sGridNo, UINT16 usStructureID, BOOLEAN fBlowWindowSouth, B
 	CreateAnimationTile( &AniParams );
 
 	PlayJA2Sample(SoundRange<GLASS_SHATTER1, GLASS_SHATTER2>(), MIDVOLUME, 1, SoundDir(sGridNo));
+
+	return result;
 }
 
 

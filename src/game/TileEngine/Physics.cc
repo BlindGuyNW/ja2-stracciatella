@@ -1,3 +1,4 @@
+#include "DamageLog_Hooks.h"
 #include "Directories.h"
 #include "Font_Control.h"
 #include "Handle_Items.h"
@@ -852,7 +853,12 @@ static BOOLEAN PhysicsCheckForCollisions(REAL_OBJECT* pObject, INT32* piCollisio
 
 				sGridNo = vector_3ToGridNo(pObject->Position);
 
-				WindowHit(sGridNo, usStructureID, FALSE, TRUE);
+				const WindowHitResult wr = WindowHit(sGridNo, usStructureID, FALSE, TRUE);
+				if (wr != WINDOW_NO_CHANGE)
+				{
+					DamageLog::PushWindow(sGridNo, 0, wr == WINDOW_SHATTERED,
+						DamageLog::CAUSE_THROWN, pObject->owner, pObject->Obj.usItem);
+				}
 			}
 			*piCollisionID = COLLISION_NONE;
 			return( FALSE );

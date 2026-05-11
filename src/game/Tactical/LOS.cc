@@ -1,5 +1,6 @@
 #include <cmath>
 
+#include "DamageLog_Hooks.h"
 #include "Font_Control.h"
 #include "Handle_Items.h"
 #include "Structure.h"
@@ -2213,7 +2214,14 @@ static BOOLEAN BulletHitMerc(BULLET* pBullet, STRUCTURE* pStructure, BOOLEAN fIn
 
 static void BulletHitWindow(BULLET* pBullet, INT16 sGridNo, UINT16 usStructureID, BOOLEAN fBlowWindowSouth)
 {
-	WindowHit( sGridNo, usStructureID, fBlowWindowSouth, FALSE );
+	const WindowHitResult r = WindowHit( sGridNo, usStructureID, fBlowWindowSouth, FALSE );
+	if (r != WINDOW_NO_CHANGE)
+	{
+		SOLDIERTYPE* const firer = pBullet != NULL ? pBullet->pFirer : NULL;
+		const UINT16 weapon = firer != NULL ? firer->usAttackingWeapon : NOTHING;
+		DamageLog::PushWindow(sGridNo, 0, r == WINDOW_SHATTERED,
+			DamageLog::CAUSE_GUNFIRE, firer, weapon);
+	}
 }
 
 
@@ -2321,6 +2329,8 @@ static INT32 HandleBulletStructureInteraction(BULLET* pBullet, STRUCTURE* pStruc
 				{
 					// MARKSMANSHIP GAIN (marksPts): Opened/Damaged a door
 					StatChange(*pBullet->pFirer, MARKAMT, 10, FROM_SUCCESS);
+					DamageLog::PushLockEvent(pDoor->sGridNo, 0,
+						DamageLog::DISP_LOCK_SHOT, DamageLog::CAUSE_GUNFIRE, pBullet->pFirer);
 				}
 			}
 		}

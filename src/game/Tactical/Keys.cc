@@ -1,3 +1,4 @@
+#include "DamageLog_Hooks.h"
 #include "Directories.h"
 #include "Font_Control.h"
 #include "Handle_Items.h"
@@ -235,6 +236,9 @@ BOOLEAN AttemptToCrowbarLock( SOLDIERTYPE * pSoldier, DOOR * pDoor )
 		// Play lock busted sound
 		PlayLocationJA2Sample(pSoldier->sGridNo, BREAK_LOCK, MIDVOLUME, 1);
 
+		DamageLog::PushLockEvent(pDoor->sGridNo, 0,
+			DamageLog::DISP_LOCK_SMASHED, DamageLog::CAUSE_CROWBAR, pSoldier);
+
 		return( TRUE );
 	}
 
@@ -272,6 +276,9 @@ BOOLEAN AttemptToCrowbarLock( SOLDIERTYPE * pSoldier, DOOR * pDoor )
 
 		// Play lock busted sound
 		PlayLocationJA2Sample(pSoldier->sGridNo, BREAK_LOCK, MIDVOLUME, 1);
+
+		DamageLog::PushLockEvent(pDoor->sGridNo, 0,
+			DamageLog::DISP_LOCK_SMASHED, DamageLog::CAUSE_CROWBAR, pSoldier);
 
 		return( TRUE );
 	}
@@ -316,6 +323,9 @@ BOOLEAN AttemptToSmashDoor( SOLDIERTYPE * pSoldier, DOOR * pDoor )
 		// Play lock busted sound
 		PlayLocationJA2Sample(pSoldier->sGridNo, BREAK_LOCK, MIDVOLUME, 1);
 
+		DamageLog::PushLockEvent(pDoor->sGridNo, 0,
+			DamageLog::DISP_LOCK_SMASHED, DamageLog::CAUSE_KICK, pSoldier);
+
 		return( TRUE );
 	}
 
@@ -349,6 +359,9 @@ BOOLEAN AttemptToSmashDoor( SOLDIERTYPE * pSoldier, DOOR * pDoor )
 
 		// Play lock busted sound
 		PlayLocationJA2Sample(pSoldier->sGridNo, BREAK_LOCK, MIDVOLUME, 1);
+
+		DamageLog::PushLockEvent(pDoor->sGridNo, 0,
+			DamageLog::DISP_LOCK_SMASHED, DamageLog::CAUSE_KICK, pSoldier);
 
 		return( TRUE );
 	}
@@ -648,6 +661,8 @@ BOOLEAN AttemptToBlowUpLock( SOLDIERTYPE * pSoldier, DOOR * pDoor )
 		if (pDoor->damageLock(GCM->getExplosive(SHAPED_CHARGE)->getBlastEffect()->damage * 2))
 		{
 			// Lock destroyed, award experience points?
+			DamageLog::PushLockEvent(pDoor->sGridNo, 0,
+				DamageLog::DISP_LOCK_BLOWN, DamageLog::CAUSE_SHAPED_CHARGE, pSoldier);
 			return( TRUE );
 		}
 	}

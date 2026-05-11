@@ -28,6 +28,7 @@
 #include "GameMode.h"
 
 #include "ContentManager.h"
+#include "DamageLog_Hooks.h"
 #include "GameInstance.h"
 
 #include <array>
@@ -1162,6 +1163,14 @@ StructureDamageResult DamageStructure(STRUCTURE* const s, UINT8 damage, Structur
 			// ATE: Set hit points to zero
 			STRUCTURE* const base = FindBaseStructure(s);
 			base->ubHitPoints = 0;
+
+			// Record before we ignite, so the prop's own destruction
+			// records ahead of the secondary explosion's structure
+			// events. Level argument is best-effort 0 (ground): nearly
+			// all explosive props (gas tanks, barrels) sit at ground
+			// level; a roof barrel is rare and only loses its IsKnownTile
+			// gate, not the record itself.
+			DamageLog::PushStructureIgnited(s, grid_no, 0, owner, NOTHING);
 
 			IgniteExplosionXY(owner, x, y, 0, grid_no, STRUCTURE_IGNITE, 0);
 

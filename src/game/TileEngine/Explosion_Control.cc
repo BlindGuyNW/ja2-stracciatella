@@ -4,6 +4,7 @@
 #include "Action_Items.h"
 #include "Animation_Control.h"
 #include "ContentManager.h"
+#include "DamageLog_Hooks.h"
 #include "Debug.h"
 #include "ExplosionAnimationModel.h"
 #include "FOV.h"
@@ -355,7 +356,17 @@ static bool ExplosiveDamageStructureAtGridNo(STRUCTURE* const pCurrent, STRUCTUR
 		// Damage structure!
 		INT16 const sX = CenterX(grid_no);
 		INT16 const sY = CenterY(grid_no);
-		INT8 bDamageReturnVal = DamageStructure(pCurrent, wound_amt, STRUCTURE_DAMAGE_EXPLOSION, grid_no, sX, sY, NULL);
+		// Thread `owner` through (was previously NULL): the explosion
+		// caller has the planter / thrower in scope, and our damage log
+		// wants attribution. The IGNITE branch inside DamageStructure
+		// also uses `owner` for the secondary IgniteExplosionXY, but
+		// that branch is gunfire-only so passing owner here is harmless
+		// for the prior NULL path.
+		INT8 bDamageReturnVal = DamageStructure(pCurrent, wound_amt, STRUCTURE_DAMAGE_EXPLOSION, grid_no, sX, sY, owner);
+		DamageLog::PushStructure(pCurrent, grid_no, level,
+			STRUCTURE_DAMAGE_EXPLOSION,
+			static_cast<StructureDamageResult>(bDamageReturnVal),
+			owner, NOTHING);
 		if (bDamageReturnVal == STRUCTURE_NOT_DAMAGED) return true;
 
 		BOOLEAN fDestroyed = (bDamageReturnVal == STRUCTURE_DESTROYED);
@@ -1044,7 +1055,10 @@ static BOOLEAN ExpAffect(const INT16 sBombGridNo, const INT16 sGridNo, const UIN
 }
 
 
-static void GetRayStopInfo(UINT32 uiNewSpot, UINT8 ubDir, INT8 bLevel, BOOLEAN fSmokeEffect, INT32 uiCurRange, INT32* piMaxRange, UINT8* pubKeepGoing)
+// owner / usItem propagate from SpreadEffect for the damage-log push
+// inside the blast-window branch; nothing else uses them. Pass NULL /
+// NOTHING when calling outside an attributable explosion.
+static void GetRayStopInfo(UINT32 uiNewSpot, UINT8 ubDir, INT8 bLevel, BOOLEAN fSmokeEffect, INT32 uiCurRange, INT32* piMaxRange, UINT8* pubKeepGoing, SOLDIERTYPE* owner, UINT16 usItem)
 {
 	INT8      bStructHeight;
 	UINT8     ubMovementCost;
@@ -1161,7 +1175,12 @@ static void GetRayStopInfo(UINT32 uiNewSpot, UINT8 ubDir, INT8 bLevel, BOOLEAN f
 
 				if ( pBlockingStructure != NULL )
 				{
-					WindowHit( (INT16)uiNewSpot, pBlockingStructure->usStructureID, fBlowWindowSouth, TRUE );
+					const WindowHitResult wr = WindowHit( (INT16)uiNewSpot, pBlockingStructure->usStructureID, fBlowWindowSouth, TRUE );
+					if (wr != WINDOW_NO_CHANGE)
+					{
+						DamageLog::PushWindow((INT16)uiNewSpot, bLevel, wr == WINDOW_SHATTERED,
+							DamageLog::CAUSE_EXPLOSION, owner, usItem);
+					}
 				}
 			}
 
@@ -1179,7 +1198,12 @@ static void GetRayStopInfo(UINT32 uiNewSpot, UINT8 ubDir, INT8 bLevel, BOOLEAN f
 			{
 				if ( pBlockingStructure != NULL )
 				{
-					WindowHit( sNewGridNo, pBlockingStructure->usStructureID, FALSE, TRUE );
+					const WindowHitResult wr = WindowHit( sNewGridNo, pBlockingStructure->usStructureID, FALSE, TRUE );
+					if (wr != WINDOW_NO_CHANGE)
+					{
+						DamageLog::PushWindow(sNewGridNo, bLevel, wr == WINDOW_SHATTERED,
+							DamageLog::CAUSE_EXPLOSION, owner, usItem);
+					}
 				}
 			}
 
@@ -1195,7 +1219,12 @@ static void GetRayStopInfo(UINT32 uiNewSpot, UINT8 ubDir, INT8 bLevel, BOOLEAN f
 			{
 				if ( pBlockingStructure != NULL )
 				{
-					WindowHit( sNewGridNo, pBlockingStructure->usStructureID, FALSE, TRUE );
+					const WindowHitResult wr = WindowHit( sNewGridNo, pBlockingStructure->usStructureID, FALSE, TRUE );
+					if (wr != WINDOW_NO_CHANGE)
+					{
+						DamageLog::PushWindow(sNewGridNo, bLevel, wr == WINDOW_SHATTERED,
+							DamageLog::CAUSE_EXPLOSION, owner, usItem);
+					}
 				}
 			}
 		}
@@ -1331,7 +1360,7 @@ void SpreadEffect(const INT16 sGridNo, const UINT8 ubRadius, const UINT16 usItem
 			else
 			{
 				// Check if struct is a tree, etc and reduce range...
-				GetRayStopInfo( uiNewSpot, ubDir, bLevel, fSmokeEffect, cnt, &uiTempRange, &ubKeepGoing );
+				GetRayStopInfo( uiNewSpot, ubDir, bLevel, fSmokeEffect, cnt, &uiTempRange, &ubKeepGoing, owner, usItem );
 			}
 
 			if (ubKeepGoing)
@@ -1373,7 +1402,7 @@ void SpreadEffect(const INT16 sGridNo, const UINT8 ubRadius, const UINT16 usItem
 						if (uiNewSpot != uiBranchSpot)
 						{
 							// Check if struct is a tree, etc and reduce range...
-							GetRayStopInfo( uiNewSpot, ubBranchDir, bLevel, fSmokeEffect, branchCnt, &ubBranchRange, &ubKeepGoing );
+							GetRayStopInfo( uiNewSpot, ubBranchDir, bLevel, fSmokeEffect, branchCnt, &ubBranchRange, &ubKeepGoing, owner, usItem );
 
 							if ( ubKeepGoing )
 							{
