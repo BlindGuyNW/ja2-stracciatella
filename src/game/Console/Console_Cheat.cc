@@ -1,5 +1,6 @@
 #include "Console_Cheat.h"
 
+#include "EMail.h"
 #include "Finances.h"
 #include "Game_Clock.h"
 #include "Interface.h"
@@ -204,6 +205,41 @@ namespace
 			sec.AsShortString()));
 	}
 
+	// Mirrors the body of the EVENT_DAY2_ADD_EMAIL_FROM_IMP handler at
+	// Game_Event_Hook.cc:127 — drops the personality / attitude / skills
+	// profile email into the inbox immediately, instead of waiting for
+	// 07:00 on (IMP creation day + 2). Gates on (a) an IMP actually
+	// having been created (the email's body reads from gMercProfiles[
+	// PLAYER_GENERATED_CHARACTER_ID + iVoiceId] and would otherwise
+	// dump garbage), and (b) the email not already being in the inbox.
+	void cheatImpEmail(const ArgList&)
+	{
+		if (!LaptopSaveInfo.fIMPCompletedFlag)
+		{
+			Console_Println(
+				"No IMP character has been created. Complete the IMP "
+				"questionnaire first (web imp).");
+			return;
+		}
+
+		for (const Email* m = pEmailList; m; m = m->Next)
+		{
+			if (m->usOffset == IMP_EMAIL_PROFILE_RESULTS)
+			{
+				Console_Println(
+					"IMP profile-results email is already in the inbox; "
+					"open it with 'email <id>'.");
+				return;
+			}
+		}
+
+		AddEmail(IMP_EMAIL_PROFILE_RESULTS, IMP_EMAIL_PROFILE_RESULTS_LENGTH,
+		         IMP_PROFILE_RESULTS, GetWorldTotalMin());
+		Console_Println(
+			"IMP profile-results email delivered. Open it with "
+			"'email unread' then 'email <id>'.");
+	}
+
 	struct Entry
 	{
 		const char* name;
@@ -219,6 +255,7 @@ namespace
 		{ "heal",     &cheatHeal,     "heal — full life/breath/bleeding reset for the living team" },
 		{ "ap",       &cheatAp,       "ap — refill action points for the living team" },
 		{ "liberate", &cheatLiberate, "liberate <sector> — flip a sector to player control (no hostiles)" },
+		{ "impemail", &cheatImpEmail, "impemail — deliver the IMP profile-results email now (normally arrives day+2 at 07:00)" },
 	};
 
 	void listCheats()

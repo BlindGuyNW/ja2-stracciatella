@@ -1729,14 +1729,37 @@ void Email_FireOpenSideEffects(Email* const m)
 	// safe to call from the console.
 	HandleAnySpecialEmailMessageEvents(offset);
 
-	// HandleMailSpecialMessages also handles MERC bookmarks and rewrites
-	// insurance amounts in-place (idempotent) — both useful from the
-	// console — but the IMP_EMAIL_PROFILE_RESULTS branch builds
-	// pMessageRecordList for the GUI viewer's wrap layout. The console
-	// loop reads records directly via LoadEMailText and would leak that
-	// list, so we route around it.
+	// HandleMailSpecialMessages handles MERC bookmarks and rewrites
+	// insurance amounts in-place (idempotent — useful from the console),
+	// but its IMP_EMAIL_PROFILE_RESULTS branch builds pMessageRecordList
+	// for the GUI viewer's wrap layout. The console reads that body via
+	// Email_ReadIMPProfileResultsBody (which brackets the same build /
+	// clear cycle) before getting here, so firing it again would dangle
+	// a fresh allocation with no consumer.
 	if (offset == IMP_EMAIL_PROFILE_RESULTS) return;
 	HandleMailSpecialMessages(static_cast<UINT16>(offset), m);
+}
+
+
+std::vector<ST::string> Email_ReadIMPProfileResultsBody()
+{
+	// Engine helper assembles the personality/attitude/skills prose
+	// records onto the file-static pMessageRecordList; the function
+	// no-ops if the list is already populated, so make sure we start
+	// clean. Then snapshot the records and tear down — same lifecycle
+	// the GUI viewer follows (PreProcessEmail builds, ExitEmail clears),
+	// compressed into one call.
+	ClearOutEmailMessageRecordsList();
+	HandleIMPCharProfileResultsMessage();
+
+	std::vector<ST::string> out;
+	for (Record const* r = pMessageRecordList; r; r = r->Next)
+	{
+		out.push_back(r->pRecord);
+	}
+
+	ClearOutEmailMessageRecordsList();
+	return out;
 }
 
 

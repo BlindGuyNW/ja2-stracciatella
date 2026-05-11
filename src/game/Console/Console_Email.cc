@@ -102,17 +102,27 @@ namespace
 		Console_Println(ST::format("Subject: {}", trimmedSubject(*m)));
 		Console_Println("");
 
-		// Body records sit at usOffset+1 .. usOffset+usLength-1, except for
-		// IMP_EMAIL_PROFILE_RESULTS where the GUI also includes the offset
-		// record (see PreProcessEmail in EMail.cc).
-		const UINT32 first = (m->usOffset == IMP_EMAIL_PROFILE_RESULTS)
-			? m->usOffset
-			: m->usOffset + 1;
-		const UINT32 last = m->usOffset + m->usLength;
-
-		for (UINT32 i = first; i < last; ++i)
+		if (m->usOffset == IMP_EMAIL_PROFILE_RESULTS)
 		{
-			Console_Println(cleanText(LoadEMailText(i)));
+			// Body isn't in EMAIL.EDT — only the subject is. The actual
+			// personality / attitude / skills prose is dynamically built
+			// from IMP-results records keyed on the player IMP's profile.
+			// Email_ReadIMPProfileResultsBody brackets the engine's
+			// assembly so no GUI viewer state lingers.
+			for (auto const& para : Email_ReadIMPProfileResultsBody())
+			{
+				Console_Println(cleanText(para));
+			}
+		}
+		else
+		{
+			// Body records sit at usOffset+1 .. usOffset+usLength-1.
+			const UINT32 first = m->usOffset + 1;
+			const UINT32 last  = m->usOffset + m->usLength;
+			for (UINT32 i = first; i < last; ++i)
+			{
+				Console_Println(cleanText(LoadEMailText(i)));
+			}
 		}
 
 		// Match the GUI: opening an email marks it read AND triggers the

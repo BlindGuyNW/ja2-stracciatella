@@ -4,6 +4,7 @@
 #include "Types.h"
 
 #include <string_theory/string>
+#include <vector>
 
 
 #define IMP_EMAIL_INTRO				0
@@ -191,10 +192,21 @@ ST::string LoadEMailText(UINT32 entry);
 // this so that opening the IMP intro email actually registers IMP in the
 // bookmark list — same as the GUI viewer does. Caller is responsible for
 // gating: this should only fire on a deliberate "open" action, not when
-// merely listing the inbox. Implementation deliberately skips the
-// IMP_EMAIL_PROFILE_RESULTS branch (it builds GUI-only state) and any
-// other paths whose side effects are tied to the email viewer's lifecycle.
+// merely listing the inbox. Skips IMP_EMAIL_PROFILE_RESULTS because that
+// branch's side effect IS building the dynamic body — the console reads
+// that body via Email_ReadIMPProfileResultsBody before calling this, so
+// firing it again here would re-populate the GUI viewer's wrap cache
+// with no one to consume or free it.
 void Email_FireOpenSideEffects(Email* m);
+
+// Returns the body paragraphs of the IMP profile-results email. Only the
+// subject of that email lives statically in EMAIL.EDT; the body is
+// dynamically assembled from IMP-results EDT records keyed on the
+// player IMP's chosen personality and attitude (see
+// HandleIMPCharProfileResultsMessage in EMail.cc). Brackets the same
+// pMessageRecordList build/clear cycle the GUI viewer uses — caller
+// gets the strings, no engine state is left dangling.
+std::vector<ST::string> Email_ReadIMPProfileResultsBody();
 
 
 // message manipulation
