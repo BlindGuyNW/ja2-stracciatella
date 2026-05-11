@@ -47,6 +47,7 @@ namespace
 		{ "nearby",    &Cmd_Nearby,     "nearby [category] [N] — bare = combat-actionable; categories: enemies|mercs|civs|items|doors|containers|exits|hazards|mines|bombs|unexplored|all" },
 		{ "look",      &Cmd_Look,       "look [<dir> [N]] — scan a direction (or all 4 cardinals)" },
 		{ "tile",      &Cmd_Tile,       "tile <target> — terrain, room, structures (walls/doors/windows/cover), occupant" },
+		{ "room",      &Cmd_Room,       "room [id] — bounding box, doors, occupants, items for the merc's current room (or one by ID)" },
 		{ "cth",       &Cmd_Cth,        "cth <target> — chance-to-hit and AP cost at aim 0..4 (gun or throwing knife)" },
 		{ "cover",     &Cmd_Cover,      "cover [target] — per-stance cover at a tile; 'cover scan [N]' for the radius field" },
 		{ "inventory",  &Cmd_Inventory,  "inventory [name] — slots, ammo, and reload sources"      },

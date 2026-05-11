@@ -32,6 +32,27 @@ bool startsWithCI(const ST::string& haystack, const std::string& needle)
 	return true;
 }
 
+ST::string formatOffset(INT16 origin, INT16 dest)
+{
+	if (origin == dest) return ST::string("here");
+	const INT16 origCol = origin % WORLD_COLS;
+	const INT16 origRow = origin / WORLD_COLS;
+	const INT16 destCol = dest   % WORLD_COLS;
+	const INT16 destRow = dest   / WORLD_COLS;
+	const int dx = destCol - origCol; // E positive, W negative
+	const int dy = origRow - destRow; // N positive, S negative (rows count down north)
+	ST::string out;
+	if      (dx > 0) out  = ST::format("{} E", dx);
+	else if (dx < 0) out  = ST::format("{} W", -dx);
+	if (dy != 0)
+	{
+		if (!out.empty()) out += " ";
+		if (dy > 0) out += ST::format("{} N", dy);
+		else        out += ST::format("{} S", -dy);
+	}
+	return out;
+}
+
 INT8 parseCompass(const std::string& tok)
 {
 	std::string s;
@@ -317,29 +338,92 @@ int parseTarget(const std::vector<std::string>& args,
 		}
 	}
 
-	// Direction + steps form.
-	const INT8 dir = parseCompass(tok);
-	if (dir >= 0)
+	// Direction + steps form, optionally chained as a second pair so
+	// non-axial offsets read out of `nearby` round-trip back to the
+	// listed tile. `nearby` renders cartesian components via
+	// formatOffset (e.g. `8 E 3 N`); typing those back as `tile 8 e 3 n`
+	// — or `tile e 8 n 3`, `tile n 3 e 8`, any per-segment permutation —
+	// walks each segment from the previous endpoint and lands on the
+	// exact tile. Both orderings within a segment are accepted because
+	// `nearby` lists numbers-first and no JA2 name is purely numeric, so
+	// the tokens are unambiguous. Each segment must be {compass, +int}
+	// in some order; mixed orders across the two segments are fine.
+	auto isSegment = [&](std::size_t at, INT8& dirOut, int& stepsOut) -> bool
 	{
-		if (!observer)
+		if (at + 1 >= args.size()) return false;
+		// Try compass-first.
+		const INT8 d0 = parseCompass(args[at]);
+		if (d0 >= 0)
 		{
-			err = "no merc selected to anchor relative direction";
+			int s;
+			if (parseInt(args[at + 1], s) && s > 0)
+			{
+				dirOut = d0;
+				stepsOut = s;
+				return true;
+			}
+			return false;
+		}
+		// Try number-first.
+		int s;
+		if (parseInt(args[at], s) && s > 0)
+		{
+			const INT8 d1 = parseCompass(args[at + 1]);
+			if (d1 >= 0)
+			{
+				dirOut = d1;
+				stepsOut = s;
+				return true;
+			}
+		}
+		return false;
+	};
+
+	{
+		INT8 dir1; int steps1;
+		if (isSegment(start, dir1, steps1))
+		{
+			if (!observer)
+			{
+				err = "no merc selected to anchor relative direction";
+				return 0;
+			}
+			INT16 g = walkSteps(observer->sGridNo, dir1, static_cast<INT16>(steps1));
+			int   consumed = 2;
+
+			// Optional second segment. Quietly skip if the next two tokens
+			// aren't a clean segment — the caller might be passing
+			// additional verb arguments after the address (`move e 5 run`
+			// keeps `run` for the verb).
+			INT8 dir2; int steps2;
+			if (isSegment(start + 2, dir2, steps2))
+			{
+				g = walkSteps(g, dir2, static_cast<INT16>(steps2));
+				consumed = 4;
+			}
+
+			out.soldier = nullptr;
+			out.gridno  = g;
+			return consumed;
+		}
+	}
+
+	// Half-segment hints: a lone compass or lone positive integer is
+	// clearly a typo of the offset form, not a soldier name. Surface a
+	// specific message instead of falling through to "no known soldier
+	// matches '5'", which buries the real problem.
+	if (parseCompass(tok) >= 0)
+	{
+		err = ST::format("'{}' needs a step count (e.g. '{} 5' or '5 {}')", tok, tok, tok);
+		return 0;
+	}
+	{
+		int n;
+		if (parseInt(tok, n) && n > 0)
+		{
+			err = ST::format("'{}' needs a direction (e.g. '{} n' or 'n {}')", tok, tok, tok);
 			return 0;
 		}
-		if (start + 1 >= args.size())
-		{
-			err = ST::format("'{}' needs a step count (e.g. '{} 5')", tok, tok);
-			return 0;
-		}
-		int steps;
-		if (!parseInt(args[start + 1], steps) || steps <= 0)
-		{
-			err = ST::format("step count must be a positive integer, got '{}'", args[start + 1]);
-			return 0;
-		}
-		out.soldier = nullptr;
-		out.gridno  = walkSteps(observer->sGridNo, dir, static_cast<INT16>(steps));
-		return 2;
 	}
 
 	// Name form.

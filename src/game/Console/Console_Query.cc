@@ -294,27 +294,26 @@ namespace
 	ST::string formatHostileLine(const ListedSoldier& ls, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
 		const SOLDIERTYPE& t = *ls.soldier;
-		const UINT8  dir    = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, t.sGridNo));
+		const ST::string offset = formatOffset(observer.sGridNo, t.sGridNo);
 		const UINT16 weapon = t.inv[HANDPOS].usItem;
 		const ST::string room = roomSuffix(observer, t.sGridNo);
 		return weapon != 0
-			? ST::format("  e{} {} {}, {} tiles {}, {}, life {}, {}{}",
+			? ST::format("  e{} {} {}, {}, {}, life {}, {}{}",
 			             tagN, t.name, coordLabel(t.sGridNo),
-			             ls.distance, directionWord(dir),
+			             offset,
 			             stanceWord(t), t.bLife, itemName(weapon), room)
-			: ST::format("  e{} {} {}, {} tiles {}, {}, life {}{}",
+			: ST::format("  e{} {} {}, {}, {}, life {}{}",
 			             tagN, t.name, coordLabel(t.sGridNo),
-			             ls.distance, directionWord(dir),
+			             offset,
 			             stanceWord(t), t.bLife, room);
 	}
 
 	ST::string formatFriendlyLine(const ListedSoldier& ls, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
 		const SOLDIERTYPE& t = *ls.soldier;
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, t.sGridNo));
-		return ST::format("  m{} {} {}, {} tiles {}, life {}, AP {}{}",
+		return ST::format("  m{} {} {}, {}, life {}, AP {}{}",
 		                  tagN, t.name, coordLabel(t.sGridNo),
-		                  ls.distance, directionWord(dir),
+		                  formatOffset(observer.sGridNo, t.sGridNo),
 		                  t.bLife, t.bActionPoints,
 		                  roomSuffix(observer, t.sGridNo));
 	}
@@ -372,8 +371,6 @@ namespace
 
 	ST::string formatItemPileLine(const ItemPile& p, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, p.gridno));
-
 		// Group identical item types into "name xN" so a corpse with one
 		// AK and four mags reads as "AK-47, 4x 7.62mm mag" not five lines.
 		// Order is first-seen so the most "interesting" item (usually the
@@ -397,8 +394,8 @@ namespace
 				: itemName(kinds[i]);
 		}
 
-		return ST::format("  i{} {} tiles {}: {}{}",
-		                  tagN, p.distance, directionWord(dir), list,
+		return ST::format("  i{} {}: {}{}",
+		                  tagN, formatOffset(observer.sGridNo, p.gridno), list,
 		                  roomSuffix(observer, p.gridno));
 	}
 
@@ -517,16 +514,13 @@ namespace
 
 	ST::string formatContainerLine(const ListedContainer& c, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, c.gridno));
-		return ST::format("  k{} {} tiles {}: container{}",
-		                  tagN, c.distance, directionWord(dir),
+		return ST::format("  k{} {}: container{}",
+		                  tagN, formatOffset(observer.sGridNo, c.gridno),
 		                  roomSuffix(observer, c.gridno));
 	}
 
 	ST::string formatDoorLine(const ListedDoor& d, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, d.gridno));
-
 		const char* state = d.perceivedKnown
 			? (d.perceivedOpen ? "open" : "closed")
 			: "state unknown";
@@ -540,8 +534,8 @@ namespace
 			default:                      lock = "";                break; // UNKNOWN: don't volunteer
 		}
 
-		return ST::format("  d{} {} tiles {}: {}{}{}",
-		                  tagN, d.distance, directionWord(dir), state, lock,
+		return ST::format("  d{} {}: {}{}{}",
+		                  tagN, formatOffset(observer.sGridNo, d.gridno), state, lock,
 		                  roomSuffix(observer, d.gridno));
 	}
 
@@ -570,14 +564,13 @@ namespace
 	ST::string formatCivilianLine(const ListedSoldier& ls, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
 		const SOLDIERTYPE& t = *ls.soldier;
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, t.sGridNo));
 		// Civilians' names are often generic ("Civilian") for crowd extras;
 		// quest NPCs have proper names. Either way, lead with the name and
 		// leave gameplay vitals (life/AP) off — civs aren't typically a
 		// resource the player manages.
-		return ST::format("  c{} {} {}, {} tiles {}, {}{}",
+		return ST::format("  c{} {} {}, {}, {}{}",
 		                  tagN, t.name, coordLabel(t.sGridNo),
-		                  ls.distance, directionWord(dir),
+		                  formatOffset(observer.sGridNo, t.sGridNo),
 		                  stanceWord(t),
 		                  roomSuffix(observer, t.sGridNo));
 	}
@@ -669,17 +662,19 @@ namespace
 
 	ST::string formatExitLine(const ListedExit& e, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, e.gridno));
-		const ST::string dest = GetSectorIDString(e.dest, FALSE);
+		const ST::string offset = formatOffset(observer.sGridNo, e.gridno);
+		const ST::string dest   = GetSectorIDString(e.dest, FALSE);
 		if (e.hasGridDest)
 		{
-			return ST::format("  x{} {} tiles {}: to {}",
-			                  tagN, e.distance, directionWord(dir), dest);
+			return ST::format("  x{} {}: to {}",
+			                  tagN, offset, dest);
 		}
 		// Map edge: walking off this tile transitions to the neighbor
 		// sector on that side; engine still pops the sector-exit dialog.
-		return ST::format("  x{} {} tiles {}: map edge {} -> {}",
-		                  tagN, e.distance, directionWord(dir),
+		// e.side stays as a directionWord because it labels which *wall*
+		// the edge is on, not a bearing from the merc.
+		return ST::format("  x{} {}: map edge {} -> {}",
+		                  tagN, offset,
 		                  directionWord(e.side), dest);
 	}
 
@@ -776,12 +771,17 @@ namespace
 			});
 	}
 
-	ST::string formatFrontierLine(const ListedFrontier& f, std::size_t tagN, const SOLDIERTYPE& /*observer*/)
+	ST::string formatFrontierLine(const ListedFrontier& f, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
+		// f.dir is the *scan axis* the frontier was found along, not a
+		// derived bearing — keep it cardinal. The nearest-tile gridno is a
+		// concrete point, so it gets the precise cartesian offset.
 		const INT16 col = f.gridno % WORLD_COLS;
 		const INT16 row = f.gridno / WORLD_COLS;
-		return ST::format("  u{} {} tiles {}: nearest at ({},{}), {} tiles unseen this way",
-		                  tagN, f.distance, directionWord(f.dir), col, row, f.count);
+		return ST::format("  u{} {} axis: nearest at {} ({},{}), {} tiles unseen this way",
+		                  tagN, directionWord(f.dir),
+		                  formatOffset(observer.sGridNo, f.gridno),
+		                  col, row, f.count);
 	}
 
 	// Hazard label priority: most-dangerous wins when a tile carries
@@ -883,15 +883,13 @@ namespace
 
 	ST::string formatHazardLine(const ListedHazard& h, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, h.gridno));
+		const ST::string offset = formatOffset(observer.sGridNo, h.gridno);
 		if (h.tileCount <= 1)
 		{
-			return ST::format("  z{} {} tiles {}: {}",
-			                  tagN, h.distance, directionWord(dir), h.label);
+			return ST::format("  z{} {}: {}", tagN, offset, h.label);
 		}
-		return ST::format("  z{} {} tiles {}: {} ({} tiles)",
-		                  tagN, h.distance, directionWord(dir),
-		                  h.label, h.tileCount);
+		return ST::format("  z{} {}: {} ({} tiles)",
+		                  tagN, offset, h.label, h.tileCount);
 	}
 
 	struct ListedMine
@@ -934,9 +932,8 @@ namespace
 
 	ST::string formatMineLine(const ListedMine& m, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, m.gridno));
-		return ST::format("  b{} {} tiles {}: {} mine{}",
-		                  tagN, m.distance, directionWord(dir),
+		return ST::format("  b{} {}: {} mine{}",
+		                  tagN, formatOffset(observer.sGridNo, m.gridno),
 		                  m.player ? "friendly" : "enemy",
 		                  roomSuffix(observer, m.gridno));
 	}
@@ -996,7 +993,6 @@ namespace
 
 	ST::string formatBombLine(const ListedBomb& b, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
-		const UINT8 dir = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer.sGridNo, b.gridno));
 		ST::string mode;
 		switch (b.detonator)
 		{
@@ -1008,8 +1004,8 @@ namespace
 		}
 		// Tag prefix `p` for "placed" — distinct from `b` (mines) so the
 		// two filters can coexist when a player runs `nearby all`.
-		return ST::format("  p{} {} tiles {}: {} ({}){}",
-		                  tagN, b.distance, directionWord(dir),
+		return ST::format("  p{} {}: {} ({}){}",
+		                  tagN, formatOffset(observer.sGridNo, b.gridno),
 		                  itemName(b.itemId), mode,
 		                  roomSuffix(observer, b.gridno));
 	}
@@ -1629,7 +1625,7 @@ void Cmd_Tile(const std::vector<std::string>& args)
 {
 	if (args.size() < 2)
 	{
-		Console_Println("usage: tile <name> | tile <dir> <steps> | tile <col,row>");
+		Console_Println("usage: tile <name> | tile <tag> (e.g. d2) | tile <dir> <steps> [<dir> <steps>] (either order: '2 e' or 'e 2') | tile <col,row>");
 		return;
 	}
 
@@ -1653,9 +1649,7 @@ void Cmd_Tile(const std::vector<std::string>& args)
 	}
 	else if (observer)
 	{
-		const INT16 dist = SpacesAway(observer->sGridNo, tgt.gridno);
-		const UINT8 dir  = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(observer->sGridNo, tgt.gridno));
-		label = dist == 0 ? ST::string("Tile here") : ST::format("Tile {} {}", dist, directionWord(dir));
+		label = ST::format("Tile {}", formatOffset(observer->sGridNo, tgt.gridno));
 	}
 	else
 	{
@@ -1709,6 +1703,246 @@ void Cmd_Tile(const std::vector<std::string>& args)
 	}
 
 	printTileStructures(tgt.gridno);
+}
+
+void Cmd_Room(const std::vector<std::string>& args)
+{
+	if (!gfWorldLoaded)
+	{
+		Console_Println("No world loaded.");
+		return;
+	}
+	SOLDIERTYPE* const observer = requireSelectedMerc("No merc selected to anchor 'room' on.");
+	if (!observer) return;
+
+	// Pick the target room: explicit arg or merc's current.
+	UINT8 roomId;
+	if (args.size() < 2)
+	{
+		roomId = GetRoom(observer->sGridNo);
+		if (roomId == NO_ROOM)
+		{
+			Console_Println("You're outdoors. Pass a room ID (e.g. 'room 29') to inspect one.");
+			return;
+		}
+	}
+	else
+	{
+		int parsed;
+		if (!parseInt(args[1], parsed) || parsed < 0 || parsed >= NO_ROOM)
+		{
+			Console_Println(ST::format("'{}' is not a valid room ID (0..{}).", args[1], NO_ROOM - 1));
+			return;
+		}
+		roomId = static_cast<UINT8>(parsed);
+	}
+
+	// Pass 1: bounding box + interior tile count. Rooms can be irregular
+	// (L-shaped, with internal gaps), so the rectangle bound is an outer
+	// envelope; we report interior count separately and flag mismatch.
+	INT16 minCol = WORLD_COLS, maxCol = -1;
+	INT16 minRow = WORLD_ROWS, maxRow = -1;
+	int interior = 0;
+	for (INT16 g = 0; g < WORLD_MAX; ++g)
+	{
+		if (GetRoom(g) != roomId) continue;
+		const INT16 col = g % WORLD_COLS;
+		const INT16 row = g / WORLD_COLS;
+		if (col < minCol) minCol = col;
+		if (col > maxCol) maxCol = col;
+		if (row < minRow) minRow = row;
+		if (row > maxRow) maxRow = row;
+		++interior;
+	}
+	if (interior == 0)
+	{
+		Console_Println(ST::format("Room {}: not present in this sector.", roomId));
+		return;
+	}
+
+	const INT16 w = static_cast<INT16>(maxCol - minCol + 1);
+	const INT16 h = static_cast<INT16>(maxRow - minRow + 1);
+	const INT16 nwGrid = static_cast<INT16>(minRow * WORLD_COLS + minCol);
+	const INT16 seGrid = static_cast<INT16>(maxRow * WORLD_COLS + maxCol);
+	const bool rectangular = (interior == static_cast<int>(w) * static_cast<int>(h));
+
+	Console_Println(ST::format("Room {}: {} wide x {} tall, {} floor tiles{}.",
+	                           roomId, w, h, interior,
+	                           rectangular ? "" : " (irregular shape)"));
+	Console_Println(ST::format("  NW corner at {}, SE corner at {}.",
+	                           formatOffset(observer->sGridNo, nwGrid),
+	                           formatOffset(observer->sGridNo, seGrid)));
+
+	// Doors. Reuse the `nearby doors` enumeration so tag indices match
+	// what the user sees in `nearby` — d2 in `room` is the same door as
+	// d2 in `nearby doors`. A door is relevant to this room if either:
+	//   (a) its tile is in the room (interior door), or
+	//   (b) any 4-cardinal neighbor of its tile is in the room.
+	// Walls and doors are stored on the south/east side of their seam
+	// (`Explosion_Control.cc:508-532`), so a door between rooms 29 and 28
+	// commonly lives on a room-28 tile while bordering room 29; (a)
+	// alone misses every shared-wall door. The "other side" room — the
+	// room (or outdoors) on the non-roomId neighbor — is annotated so
+	// the user can see at a glance where each opening leads.
+	{
+		std::vector<ListedDoor> doors;
+		enumerateDoors(*observer, doors);
+
+		auto otherSideRoom = [&](INT16 g) -> int
+		{
+			// -1 = no qualifying neighbor (door isn't related to roomId);
+			// NO_ROOM = the other side is outdoors.
+			int hostNonRoomNeighbor = -1;
+			bool hostIsRoom = (GetRoom(g) == roomId);
+			for (UINT8 dir = 0; dir < NUM_WORLD_DIRECTIONS; dir += 2)
+			{
+				const INT16 ng = NewGridNo(g, DirIncrementer[dir]);
+				if (ng == NOWHERE || ng == g) continue;
+				const UINT8 nr = GetRoom(ng);
+				if (hostIsRoom)
+				{
+					if (nr != roomId) { hostNonRoomNeighbor = nr; break; }
+				}
+				else if (nr == roomId)
+				{
+					return GetRoom(g); // the host tile is the "other side"
+				}
+			}
+			return hostIsRoom ? hostNonRoomNeighbor : -1;
+		};
+
+		std::vector<std::size_t> relevant;
+		for (std::size_t i = 0; i < doors.size(); ++i)
+		{
+			const int other = otherSideRoom(doors[i].gridno);
+			if (other == -1 && GetRoom(doors[i].gridno) != roomId) continue;
+			relevant.push_back(i);
+		}
+
+		if (!relevant.empty())
+		{
+			Console_Println(ST::format("  Doors ({}):", relevant.size()));
+			for (std::size_t i : relevant)
+			{
+				const ListedDoor& d = doors[i];
+				const char* state = d.perceivedKnown
+					? (d.perceivedOpen ? "open" : "closed")
+					: "state unknown";
+				const char* lock;
+				switch (d.perceivedLock)
+				{
+					case DOOR_PERCEIVED_LOCKED:   lock = ", locked";      break;
+					case DOOR_PERCEIVED_UNLOCKED: lock = ", unlocked";    break;
+					case DOOR_PERCEIVED_BROKEN:   lock = ", lock broken"; break;
+					default:                      lock = "";              break;
+				}
+				const int other = otherSideRoom(d.gridno);
+				ST::string leadsTo;
+				if (other == NO_ROOM)              leadsTo = ", to outdoors";
+				else if (other >= 0)               leadsTo = ST::format(", to room {}", other);
+				// else: door's tile is in this room and no neighbor differs
+				// (interior partition? rare) — no annotation.
+				Console_Println(ST::format("    d{} {}: {}{}{}",
+				                           i + 1,
+				                           formatOffset(observer->sGridNo, d.gridno),
+				                           state, lock, leadsTo));
+			}
+		}
+	}
+
+	// Occupants: every soldier whose tile is in this room. Include the
+	// observer (the enumerators skip them by design — but "you are here"
+	// is exactly the kind of orientation a room dump should confirm).
+	{
+		std::vector<ST::string> lines;
+		auto consider = [&](SOLDIERTYPE& t, const char* tagPrefix, std::size_t tagN)
+		{
+			if (GetRoom(t.sGridNo) != roomId) return;
+			ST::string label = tagPrefix
+				? ST::format("{}{} {}", tagPrefix, tagN, t.name)
+				: ST::format("{}", t.name);
+			lines.push_back(ST::format("    {} ({}, {})",
+			                           label,
+			                           formatOffset(observer->sGridNo, t.sGridNo),
+			                           stanceWord(t)));
+		};
+
+		// Observer first (no tag — they don't appear in `nearby`).
+		if (GetRoom(observer->sGridNo) == roomId)
+		{
+			lines.push_back(ST::format("    {} ({}, {}) -- you",
+			                           observer->name,
+			                           formatOffset(observer->sGridNo, observer->sGridNo),
+			                           stanceWord(*observer)));
+		}
+
+		std::vector<ListedSoldier> hostiles;   enumerateHostiles (*observer, hostiles);
+		std::vector<ListedSoldier> teammates;  enumerateTeammates(*observer, teammates);
+		for (std::size_t i = 0; i < hostiles.size();  ++i) consider(*hostiles[i].soldier,  "e", i + 1);
+		for (std::size_t i = 0; i < teammates.size(); ++i) consider(*teammates[i].soldier, "m", i + 1);
+
+		// Civilians: re-enumerate using the same predicate as
+		// formatCivilianLine (CIV_TEAM + known). Civs don't have a global
+		// enumerator exposed here, but the rule is one liner.
+		std::size_t civN = 0;
+		FOR_EACH_MERC(it)
+		{
+			SOLDIERTYPE* const t = *it;
+			if (t->ubID == observer->ubID) continue;
+			if (t->bTeam != CIV_TEAM)      continue;
+			if (!ConsoleVis::IsKnownSoldier(*t)) continue;
+			++civN;
+			consider(*t, "c", civN);
+		}
+
+		if (!lines.empty())
+		{
+			Console_Println(ST::format("  Occupants ({}):", lines.size()));
+			for (auto const& s : lines) Console_Println(s);
+		}
+	}
+
+	// Visible item piles in this room.
+	{
+		std::vector<ItemPile> piles;
+		enumerateVisibleItems(*observer, piles);
+		std::size_t inRoom = 0;
+		for (auto const& p : piles)
+			if (GetRoom(p.gridno) == roomId) ++inRoom;
+		if (inRoom > 0)
+		{
+			Console_Println(ST::format("  Visible items ({}):", inRoom));
+			for (std::size_t i = 0; i < piles.size(); ++i)
+			{
+				if (GetRoom(piles[i].gridno) != roomId) continue;
+				const ItemPile& p = piles[i];
+				// Item-grouping mirrors formatItemPileLine; inlined to
+				// drop the "[same room]" suffix that would clutter every
+				// line in a room dump.
+				std::vector<UINT16> kinds;
+				std::vector<int>    counts;
+				for (UINT16 ui : p.items)
+				{
+					std::size_t k = 0;
+					for (; k < kinds.size(); ++k) if (kinds[k] == ui) break;
+					if (k == kinds.size()) { kinds.push_back(ui); counts.push_back(1); }
+					else                   { ++counts[k]; }
+				}
+				ST::string list;
+				for (std::size_t k = 0; k < kinds.size(); ++k)
+				{
+					if (!list.empty()) list += ", ";
+					list += counts[k] > 1
+						? ST::format("{} x{}", itemName(kinds[k]), counts[k])
+						: itemName(kinds[k]);
+				}
+				Console_Println(ST::format("    i{} {}: {}",
+				                           i + 1,
+				                           formatOffset(observer->sGridNo, p.gridno),
+				                           list));
+			}
+		}
+	}
 }
 
 void Cmd_Cth(const std::vector<std::string>& args)
@@ -1818,8 +2052,7 @@ namespace
 	struct ScanCandidate
 	{
 		INT16 gridno;
-		INT16 dist;
-		UINT8 dir;
+		UINT8 dir;     // for the exposedByDir tally only; rendering uses formatOffset(gridno)
 		INT8  cover;
 		INT16 apCost;
 	};
@@ -1855,11 +2088,7 @@ void Cmd_Cover(const std::vector<std::string>& args)
 		ST::string err;
 		if (parseTarget(args, 1, sel, tgt, err) == 0) { Console_Println(err); return; }
 		gridno = tgt.gridno;
-		const INT16 dist = SpacesAway(sel->sGridNo, gridno);
-		const UINT8 dir  = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(sel->sGridNo, gridno));
-		label = dist == 0
-			? ST::string("here")
-			: ST::format("{} tiles {}", dist, directionWord(dir));
+		label  = formatOffset(sel->sGridNo, gridno);
 	}
 
 	// Report all three stances at once. The overlay only shows the merc's
@@ -1921,7 +2150,6 @@ static void RunCoverScan(SOLDIERTYPE& sel, int radius)
 
 			ScanCandidate c;
 			c.gridno = gridno;
-			c.dist   = SpacesAway(sel.sGridNo, gridno);
 			c.dir    = static_cast<UINT8>(GetDirectionToGridNoFromGridNo(sel.sGridNo, gridno));
 			c.cover  = cover;
 			c.apCost = PlotPath(&sel, gridno, NO_COPYROUTE, FALSE, WALKING, 0);
@@ -1987,8 +2215,9 @@ static void RunCoverScan(SOLDIERTYPE& sel, int radius)
 			ScanCandidate const& c = better[i];
 			const ST::string overBudget = (c.apCost > sel.bActionPoints)
 				? ST::string(", over budget") : ST::string();
-			Console_Println(ST::format("  {} {}: {}, {} AP{}",
-				c.dist, directionWord(c.dir), coverBucket(c.cover), c.apCost, overBudget));
+			Console_Println(ST::format("  {}: {}, {} AP{}",
+				formatOffset(sel.sGridNo, c.gridno),
+				coverBucket(c.cover), c.apCost, overBudget));
 		}
 		if (better.size() > cap)
 		{

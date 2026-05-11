@@ -33,14 +33,22 @@
  *                   static map features (i/d/k/x/z/b/p/u) don't shift on
  *                   their own between a `nearby` and the next verb.
  *
- *   <dir> <steps>   two tokens. Compass word (n, ne, ..., nw) plus an
- *                   integer step count from the observer's tile. Gridno
- *                   set; soldier null. Note: this is a strict ray walk
- *                   to a specific tile, not a description — to address
- *                   something `nearby` listed, prefer the tag form,
- *                   since `nearby`'s "distance + direction" rendering
- *                   describes the entry but only round-trips back to
- *                   the listed tile when the offset is exactly axial.
+ *   <dir>/<steps>   two tokens, either order. A compass word (n, ne,
+ *                   ..., nw) and a positive integer step count from the
+ *                   observer's tile, in whichever order the user typed:
+ *                   `tile e 8` and `tile 8 e` are equivalent. Gridno
+ *                   set; soldier null. Optionally chained with a second
+ *                   segment (four tokens total) so cartesian offsets
+ *                   from `nearby` round-trip exactly: a door shown as
+ *                   `8 E 3 N` can be addressed as `tile 8 e 3 n` (the
+ *                   form that mirrors `nearby`'s rendering), `tile e 8
+ *                   n 3`, or any other per-segment permutation. The
+ *                   second segment is only consumed when both extra
+ *                   tokens unambiguously parse as a segment, so
+ *                   trailing verb arguments (e.g. `move e 5 run`) still
+ *                   flow through to the caller. No JA2 name is purely
+ *                   numeric, so the integer vs name disambiguation is
+ *                   safe in practice.
  *
  *   <col>,<row>     one token containing a comma. Map coordinate as a
  *                   fallback escape hatch. Gridno set; soldier null.
@@ -134,6 +142,20 @@ bool parseInt(const std::string& s, T& out)
  *  "northwest". Case-insensitive. Returns the matching direction enum
  *  (NORTH..NORTHWEST) or -1 if the token isn't a compass word. */
 INT8 parseCompass(const std::string& tok);
+
+/** Loss-free relative offset rendering: "3 E 4 N", "5 W", "here".
+ *  Replacement for "<n> tiles <dir>" pairs that snapped the bearing to
+ *  one of 8 compass octants via atan8 and collapsed distance through
+ *  SpacesAway's max(|dx|,|dy|) — the projection round-tripped only on
+ *  exactly axial offsets, so a door at offset (5,3) read as "5 NE" but
+ *  `tile ne 5` walked (5,5) and missed it. The cartesian form is
+ *  unambiguous and round-trips: the same components feed back into the
+ *  chained-segment address form (`tile e 5 n 3`).
+ *
+ *  East = increasing col; North = decreasing row (matches the engine's
+ *  atan8 sign convention in Soldier_Control.cc). Zero components are
+ *  omitted; east/west prints first when both axes are non-zero. */
+ST::string formatOffset(INT16 origin, INT16 dest);
 
 /** Find a single own-team merc by case-insensitive name prefix.
  *  Skips inactive / dead / out-of-sector mercs so console commands
