@@ -1512,6 +1512,119 @@ void Cmd_Look(const std::vector<std::string>& args)
 	printSingleDirection(*observer, static_cast<UINT8>(dir), trs);
 }
 
+namespace
+{
+	// Wall orientation → tile edge. JA2's INSIDE/OUTSIDE prefix
+	// describes which face of the wall is drawn (interior vs
+	// exterior surface); both block bullets the same. The TOP_LEFT /
+	// TOP_RIGHT half describes which axis the wall runs along, and
+	// walls are always stored on the south/east side of their seam:
+	//   - TOP_LEFT  wall runs E-W; stored on the tile's SOUTH edge
+	//                (Explosion_Control.cc:512-519 — damage propagates
+	//                W/E along the wall and SOUTH for the attached
+	//                tile; the editor's EXTERIOR_TOP path also stores
+	//                north-of-building walls on the outdoor tile to
+	//                the north, on that tile's S edge).
+	//   - TOP_RIGHT wall runs N-S; stored on the tile's EAST edge
+	//                (same source, lines 522-531: damage propagates
+	//                N/S along the wall, EAST for the attached tile).
+	const char* tileEdge(UINT8 orient)
+	{
+		switch (orient)
+		{
+			case INSIDE_TOP_LEFT:
+			case OUTSIDE_TOP_LEFT:  return "S";
+			case INSIDE_TOP_RIGHT:
+			case OUTSIDE_TOP_RIGHT: return "E";
+		}
+		return nullptr;
+	}
+
+	void printTileStructures(GridNo gridno)
+	{
+		// Walk the per-tile structure list directly. FindStructure is
+		// flag-filtered and doesn't let us classify each entry as we
+		// go; raw traversal is simpler here. Skip subtiles of
+		// multi-tile structures (they'd duplicate the base entry's
+		// info on every covered tile).
+		STRUCTURE* head = gpWorldLevelData[gridno].pStructureHead;
+		for (STRUCTURE* s = head; s; s = s->pNext)
+		{
+			const StructureFlags f = s->fFlags;
+			if (!(f & STRUCTURE_BASE_TILE))    continue;
+			if (f & STRUCTURE_PERSON)          continue; // shown as Occupant
+			if (f & STRUCTURE_CORPSE)          continue;
+			if (f & STRUCTURE_ROOF)            continue; // not ground-level geometry
+			if (f & STRUCTURE_NORMAL_ROOF)     continue;
+
+			const bool isOpen     = (f & STRUCTURE_OPEN)     != 0;
+			const bool isOpenable = (f & STRUCTURE_OPENABLE) != 0;
+			const bool isPassable = (f & STRUCTURE_PASSABLE) != 0;
+
+			ST::string kind;
+			if (f & STRUCTURE_ANYDOOR)
+			{
+				kind = isOpen ? "Open door" : "Closed door";
+				if (s->ubLockStrength > 0) kind += " (locked)";
+			}
+			else if (f & STRUCTURE_WALLNWINDOW)
+			{
+				kind = isOpen ? "Wall with open window" : "Wall with closed window";
+			}
+			else if (f & STRUCTURE_WALL)
+			{
+				kind = "Wall";
+			}
+			else if (f & STRUCTURE_ANYFENCE)
+			{
+				kind = "Fence";
+			}
+			else if (f & STRUCTURE_TREE)
+			{
+				kind = "Tree";
+			}
+			else if (f & STRUCTURE_VEHICLE)
+			{
+				kind = "Vehicle";
+			}
+			else if (f & STRUCTURE_SWITCH)
+			{
+				kind = isOpen ? "Switch (on)" : "Switch (off)";
+			}
+			else if (isOpenable)
+			{
+				kind = isOpen ? "Container (open)" : "Container (closed)";
+				if (s->ubLockStrength > 0) kind += " (locked)";
+			}
+			else
+			{
+				kind = "Obstacle";
+			}
+
+			// Cube extent: bottom = sCubeOffset; height = StructureHeight (1..4).
+			// Cubes 0..4 are roughly foot, knee, torso, head, above-head
+			// — same scale the LOS routines use.
+			const INT8  height = StructureHeight(s);
+			const INT16 bottom = s->sCubeOffset;
+			const INT16 top    = bottom + std::max<INT8>(height, 1) - 1;
+
+			ST::string line;
+			const char* edge = tileEdge(s->ubWallOrientation);
+			const bool isEdgeFeature =
+				(f & (STRUCTURE_WALL | STRUCTURE_WALLNWINDOW | STRUCTURE_ANYDOOR)) != 0;
+
+			if (edge && isEdgeFeature)
+				line = ST::format("  {} on {} edge (cubes {}-{}).", kind, edge, bottom, top);
+			else
+				line = ST::format("  {} (cubes {}-{}).", kind, bottom, top);
+
+			if (isPassable) line += " Passable.";
+
+			Console_Println(line);
+		}
+	}
+}
+
 void Cmd_Tile(const std::vector<std::string>& args)
 {
 	if (args.size() < 2)
@@ -1594,6 +1707,8 @@ void Cmd_Tile(const std::vector<std::string>& args)
 			                           occupant->name, stanceWord(*occupant)));
 		}
 	}
+
+	printTileStructures(tgt.gridno);
 }
 
 void Cmd_Cth(const std::vector<std::string>& args)
@@ -1633,18 +1748,32 @@ void Cmd_Cth(const std::vector<std::string>& args)
 	// level 2 (the value Handle_UI.cc:2192 sets for shoot-at-interactive-
 	// tile, the closest thing the engine has to "centre of tile").
 	const UINT8 part = AIM_SHOT_TORSO;
+	const INT8  cube = 2;
+
+	// CalcChanceToHitGun reads bAimShotLocation / bTargetLevel /
+	// bTargetCubeLevel off the firer for its internal LOS test
+	// (Weapons.cc:2124-2137). UI_Cursors.cc:253 writes these before
+	// calling. Without them the LOS test queries whatever level/body
+	// part the soldier struct happens to hold from the last UI action —
+	// silently produces a wrong base in some cases. Set them to match
+	// the same target we're querying about.
+	sel->bAimShotLocation = part;
+	sel->bTargetLevel     = tgt.soldier ? tgt.soldier->bLevel : (INT8)gsInterfaceLevel;
+	sel->bTargetCubeLevel = cube;
+
+	// chance-to-get-through doesn't depend on aim time — compute once.
+	const UINT32 through = tgt.soldier
+		? SoldierToSoldierBodyPartChanceToGetThrough(sel, tgt.soldier, part)
+		: SoldierToLocationChanceToGetThrough(sel, tgt.gridno, gsInterfaceLevel, cube, nullptr);
 
 	ST::string cells;
 	for (int aim = 0; aim <= 4; ++aim)
 	{
-		UINT32 base = (cls == IC_THROWING_KNIFE)
+		const UINT32 base = (cls == IC_THROWING_KNIFE)
 			? CalcThrownChanceToHit(sel, static_cast<INT16>(tgt.gridno),
 			                        static_cast<UINT8>(aim), part)
 			: CalcChanceToHitGun(sel, static_cast<UINT16>(tgt.gridno),
 			                     static_cast<UINT8>(aim), part, FALSE);
-		UINT32 through = tgt.soldier
-			? SoldierToSoldierBodyPartChanceToGetThrough(sel, tgt.soldier, part)
-			: SoldierToLocationChanceToGetThrough(sel, tgt.gridno, gsInterfaceLevel, 2, nullptr);
 		const int   pct = static_cast<int>(base * through / 100);
 		const UINT8 ap  = CalcTotalAPsToAttack(sel, tgt.gridno, TRUE, static_cast<INT8>(aim));
 
@@ -1654,6 +1783,17 @@ void Cmd_Cth(const std::vector<std::string>& args)
 
 	const ST::string label = tgt.soldier ? tgt.soldier->name : ST::string("target tile");
 	Console_Println(ST::format("CTH on {}:  {}", label, cells));
+
+	// When the composed CTH lands at 0 across the board it's almost
+	// always because LOS is blocked, not because skill is low — base
+	// clamps at MINCHANCETOHIT. Surface the through% so the SR user
+	// knows whether to move (LOS problem) vs aim more (skill problem).
+	// The engine's own fire path refuses the shot at this threshold
+	// (Handle_Items.cc:118 → QUOTE_NO_LINE_OF_FIRE).
+	if (through < OK_CHANCE_TO_GET_THROUGH)
+	{
+		Console_Println(ST::format("Line of fire blocked ({}% through).", through));
+	}
 }
 
 namespace
