@@ -160,10 +160,14 @@ void PrintMercSummary(const SOLDIERTYPE& s)
 	const UINT16 inHand    = s.inv[HANDPOS].usItem;
 	const UINT8  shotsLeft = s.inv[HANDPOS].ubGunShotsLeft;
 
+	// bLevel > 0 means standing on a rooftop (the engine has only two
+	// levels — I_GROUND_LEVEL / I_ROOF_LEVEL). After 'climb' the only
+	// quick confirmation the SR user has is this annotation.
+	const char* const roofTag = (s.bLevel > 0) ? ", on rooftop" : "";
 	Console_Println(ST::format(
-		"{}: life {}/{}, breath {}/{}, AP {}, {} facing {}.",
+		"{}: life {}/{}, breath {}/{}, AP {}, {} facing {}{}.",
 		s.name, s.bLife, s.bLifeMax, s.bBreath, s.bBreathMax,
-		s.bActionPoints, stanceWord(s), directionWord(s.bDirection)));
+		s.bActionPoints, stanceWord(s), directionWord(s.bDirection), roofTag));
 
 	if (inHand == 0)
 	{
@@ -1975,15 +1979,20 @@ void Cmd_Tile(const std::vector<std::string>& args)
 	// Room ID: anonymous numeric, but a stable per-sector "are we in the
 	// same enclosed space?" anchor. NO_ROOM is the engine's outdoor /
 	// unbounded sentinel — report it explicitly so the user can tell
-	// "outside" from "this tile happens to have no room data."
+	// "outside" from "this tile happens to have no room data." When the
+	// view is at roof level (the user climbed up), reword "in room N" as
+	// "on roof of room N" — the engine extends room IDs through the roof,
+	// so the same number means a different physical position depending on
+	// level.
 	const UINT8 room = GetRoom(tgt.gridno);
+	const bool onRoof = (level > 0);
 	if (room == NO_ROOM)
 	{
-		Console_Println("  Outdoors.");
+		Console_Println(onRoof ? "  On rooftop (no room below)." : "  Outdoors.");
 	}
 	else
 	{
-		Console_Println(ST::format("  In room {}.", room));
+		Console_Println(ST::format(onRoof ? "  On roof of room {}." : "  In room {}.", room));
 	}
 
 	// Hazards: surfaced even on unrevealed tiles (clouds rise visibly

@@ -61,7 +61,7 @@ namespace
 		{ "move-all",   &Cmd_MoveAll,    "move-all <target> [run] — whole squad walks/runs (real time)" },
 		{ "turn",       &Cmd_Turn,       "turn <n|ne|...> | turn <target> — face that way"        },
 		{ "stance",     &Cmd_Stance,     "stance <p|c|s> — prone / crouch / stand"                },
-		{ "climb",      &Cmd_Climb,      "climb — climb roof down/up or hop adjacent fence"       },
+		{ "climb",      &Cmd_Climb,      "climb [list|window] — bare: roof down/up or fence; list: enumerate options + AP; window: climb facing window" },
 		{ "fire",       &Cmd_Fire,       "fire <count> <target>"                                  },
 		{ "reload",     &Cmd_Reload,     "reload [name] — top up the held gun from carried ammo"  },
 		{ "throw",      &Cmd_Throw,      "throw <slot> <target> [aim 0-4] — toss a held grenade or throwing knife (aim is knife-only)" },

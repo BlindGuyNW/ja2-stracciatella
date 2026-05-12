@@ -456,15 +456,112 @@ void Cmd_MoveAll(const std::vector<std::string>& args)
 	                           skipped));
 }
 
-void Cmd_Climb(const std::vector<std::string>&)
+namespace
+{
+	const char* climbDirWord(UINT8 dir)
+	{
+		switch (dir)
+		{
+			case NORTH: return "N";
+			case EAST:  return "E";
+			case SOUTH: return "S";
+			case WEST:  return "W";
+			default:    return "?";
+		}
+	}
+
+	// Read-only enumeration of the four climb options the engine recognises
+	// from the merc's current tile / facing. Reuses the same Find* helpers
+	// the panel button uses (Interface_Panels.cc:630), plus the window check
+	// from Shift+J (Turn_Based_Input.cc:3581). AP cost is reported so the
+	// user can plan against their remaining points without committing.
+	void climbList(SOLDIERTYPE* sel)
+	{
+		UINT8 dir;
+		bool any = false;
+
+		if (FindLowerLevel(sel, &dir))
+		{
+			const INT8 ap = GetAPsToClimbRoof(sel, TRUE);
+			Console_Println(ST::format("  climb down {} ({} AP)",
+			                           climbDirWord(dir), ap));
+			any = true;
+		}
+		if (FindHigherLevel(sel, &dir))
+		{
+			const INT8 ap = GetAPsToClimbRoof(sel, FALSE);
+			Console_Println(ST::format("  climb up {} ({} AP)",
+			                           climbDirWord(dir), ap));
+			any = true;
+		}
+		if (FindFenceJumpDirection(sel, &dir))
+		{
+			const INT8 ap = GetAPsToJumpFence(sel);
+			Console_Println(ST::format("  hop fence {} ({} AP)",
+			                           climbDirWord(dir), ap));
+			any = true;
+		}
+		if (IsFacingClimableWindow(sel))
+		{
+			const INT8 ap = GetAPsToJumpFence(sel);
+			Console_Println(ST::format("  climb window {} ({} AP)",
+			                           climbDirWord(sel->bDirection), ap));
+			any = true;
+		}
+
+		if (!any)
+		{
+			Console_Println(ST::format(
+				"{} has no climb options here.", sel->name));
+		}
+	}
+
+	// Window climb path. Engine has no panel button for this — the only
+	// in-game trigger is Shift+J (Turn_Based_Input.cc:1745). Soldier must
+	// already be facing the window; IsFacingClimableWindow checks the tile
+	// the merc faces (N/W) or the merc's own tile (S/E) per the engine's
+	// window-storage convention. Cost matches the fence hop.
+	void climbWindow(SOLDIERTYPE* sel)
+	{
+		if (!IsFacingClimableWindow(sel))
+		{
+			Console_Println(ST::format(
+				"{} is not facing a climbable window.", sel->name));
+			return;
+		}
+		const INT8 ap = GetAPsToJumpFence(sel);
+		if (!EnoughPoints(sel, ap, 0, TRUE))
+		{
+			Console_Println(ST::format(
+				"{} needs {} AP to climb the window but has {}.",
+				sel->name, ap, sel->bActionPoints));
+			return;
+		}
+		BeginSoldierClimbWindow(sel);
+		Console_Println("Climbing through window.");
+	}
+}
+
+void Cmd_Climb(const std::vector<std::string>& args)
 {
 	SOLDIERTYPE* const sel = requireSelectedMerc();
 	if (!sel) return;
 
-	// Mirror BtnClimbCallback (Interface_Panels.cc:2086): try down → up →
-	// fence in priority order. Same dispatch the panel "Climb" button uses,
-	// so 'climb' is the one verb for roof access (both directions) and
-	// fence-hopping. The engine's Find* helpers auto-detect direction.
+	if (args.size() >= 2)
+	{
+		if (args[1] == "list")   { climbList(sel);   return; }
+		if (args[1] == "window") { climbWindow(sel); return; }
+		Console_Println(ST::format(
+			"unknown 'climb' subcommand '{}' (try: list, window, or bare 'climb')",
+			args[1]));
+		return;
+	}
+
+	// Bare 'climb' mirrors BtnClimbCallback (Interface_Panels.cc:2086): try
+	// down → up → fence in priority order. Same dispatch the panel "Climb"
+	// button uses. Window climb is its own subcommand because the panel
+	// button doesn't include it and we don't want bare 'climb' to surprise
+	// the panel's behaviour.
 	UINT8 dir;
 
 	if (FindLowerLevel(sel, &dir))
