@@ -2748,6 +2748,102 @@ namespace
 		out.label              = describeSightBlocker(out.blocker_gridno);
 		return out;
 	}
+
+	// Body cube for an LOS query. Soldier targets get cube 3 (head),
+	// matching the engine's stock "can S see this soldier" probes
+	// (OppList.cc:4892, Soldier_Ani.cc:2678, Interface_Panels.cc:386
+	// all probe at cube 3). Tile targets get cube 2 (chest), matching
+	// the generic "is there a standing-target lane here" probe `sight`
+	// and `findSightBlocker` use. Different cubes because the question
+	// is different: for a soldier, "can I spot/shoot the person";
+	// for a bare tile, "is the lane clear at chest height".
+	INT8 losTargetCube(const Target& tgt)
+	{
+		return tgt.soldier ? 3 : 2;
+	}
+
+	INT8 losTargetLevel(const Target& tgt)
+	{
+		if (tgt.soldier) return tgt.soldier->bLevel;
+		return static_cast<INT8>(gsInterfaceLevel);
+	}
+
+	// Walk a straight line from `from` to `to`, parametrised by
+	// step/totalSteps. step=0 returns `from`, step=totalSteps returns
+	// `to`. Integer-truncated lerp on col/row; for the binary search
+	// over the line this is precise enough to identify the breaking
+	// tile in nearly all cases — the worst case is a 1-tile-off ambig
+	// at the diagonal seam, which `describeSightBlocker` papers over
+	// by falling back to "obstruction" on an empty structure list.
+	GridNo lineStep(GridNo from, GridNo to, int step, int totalSteps)
+	{
+		if (totalSteps <= 0) return from;
+		const int from_col = from % WORLD_COLS;
+		const int from_row = from / WORLD_COLS;
+		const int to_col   = to   % WORLD_COLS;
+		const int to_row   = to   / WORLD_COLS;
+		const int col = from_col + (to_col - from_col) * step / totalSteps;
+		const int row = from_row + (to_row - from_row) * step / totalSteps;
+		return static_cast<GridNo>(col + row * WORLD_COLS);
+	}
+
+	struct LosBlocker
+	{
+		int        first_blocked_step;  // 1-indexed; step where the ray dies
+		int        total_steps;         // PythSpacesAway(sel, target)
+		GridNo     gridno;              // tile at first_blocked_step
+		ST::string label;
+	};
+
+	// Binary-search the first blocked step along the line from
+	// `sel.sGridNo` to `target`. Precondition: the caller has already
+	// observed that the lane to `target` is blocked (otherwise the
+	// search degenerates to "no blocker found" and we'd label nothing).
+	// Same shape as findSightBlocker but operating on an arbitrary line
+	// rather than an axial direction — the per-direction `sight` verb
+	// can address its targets via DirIncrementer[d]; `los` cannot,
+	// because the target may sit at any cartesian offset.
+	LosBlocker findLineBlocker(const SOLDIERTYPE& sel,
+	                           GridNo             target,
+	                           INT8               target_level,
+	                           INT8               target_cube)
+	{
+		LosBlocker out{};
+		out.total_steps = PythSpacesAway(sel.sGridNo, target);
+		if (out.total_steps <= 0)
+		{
+			out.first_blocked_step = 0;
+			out.gridno = sel.sGridNo;
+			out.label  = ST::string{"obstruction"};
+			return out;
+		}
+
+		auto losAtStep = [&](int step) -> bool
+		{
+			const GridNo g = lineStep(sel.sGridNo, target,
+			                          step, out.total_steps);
+			const INT32  r = SoldierTo3DLocationLineOfSightTest(
+				&sel, g, target_level, target_cube,
+				/*sight cap*/ 255, /*aware*/ TRUE);
+			return r > 0;
+		};
+
+		// Find the largest step that's still clear; the next one is
+		// where the ray dies. step=0 is trivially clear (same tile).
+		int lo = 0, hi = out.total_steps;
+		while (lo < hi)
+		{
+			const int mid = (lo + hi + 1) / 2;
+			if (losAtStep(mid)) lo = mid;
+			else                hi = mid - 1;
+		}
+
+		out.first_blocked_step = lo + 1;
+		out.gridno = lineStep(sel.sGridNo, target,
+		                     out.first_blocked_step, out.total_steps);
+		out.label  = describeSightBlocker(out.gridno);
+		return out;
+	}
 }
 
 void Cmd_Sight(const std::vector<std::string>&)
@@ -2859,6 +2955,90 @@ void Cmd_Sight(const std::vector<std::string>&)
 	{
 		Console_Println(ST::format("  {}: blind.", blindDirs));
 	}
+}
+
+void Cmd_Los(const std::vector<std::string>& args)
+{
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
+	if (args.size() < 2)
+	{
+		Console_Println("usage: los <target>");
+		return;
+	}
+
+	Target tgt;
+	ST::string err;
+	if (parseTarget(args, 1, sel, tgt, err) == 0) { Console_Println(err); return; }
+
+	// Soldier-target visibility gate. parseTarget already filters
+	// name- and tag-based soldier addresses by team-known sightings,
+	// but a tag can decay between command parse and execution; this
+	// second check keeps the position from leaking via the error
+	// message ("Ivan is at 12 E 3 N" — no, we don't say that).
+	if (tgt.soldier && !ConsoleVis::IsKnownSoldier(*tgt.soldier))
+	{
+		Console_Println(ST::format(
+			"{} is not currently visible to your team.", tgt.soldier->name));
+		return;
+	}
+
+	if (tgt.gridno == sel->sGridNo)
+	{
+		Console_Println("Target is your own tile.");
+		return;
+	}
+
+	const ST::string label = tgt.soldier ? ST::string(tgt.soldier->name)
+	                                     : ST::string("target tile");
+	const ST::string off   = formatOffset(sel->sGridNo, tgt.gridno);
+	const int        dist  = PythSpacesAway(sel->sGridNo, tgt.gridno);
+	const INT8       cube  = losTargetCube(tgt);
+	const INT8       lvl   = losTargetLevel(tgt);
+
+	// Sight envelope along the bearing to the target, so we can
+	// distinguish "wall in the way" from "too far / too dark / wrong
+	// direction for this facing". Synthetic subject gridno avoids the
+	// same-tile short-circuit at OppList.cc:920 — same trick `sight`
+	// uses for its per-direction calls.
+	const UINT8 dir_to   = static_cast<UINT8>(
+		GetDirectionToGridNoFromGridNo(sel->sGridNo, tgt.gridno));
+	const INT16 syn      = syntheticSubjectGridno(sel->sGridNo, dir_to);
+	const INT16 envelope = DistanceVisible(sel, sel->bDirection,
+	                                       dir_to, syn, sel->bLevel);
+
+	// Raw physical lane: sight cap 255 means "ignore the envelope" so
+	// we can answer the structural question (is there a wall?)
+	// independently of the perceptual one (would this merc actually
+	// spot a stationary target there right now?). The envelope above
+	// answers the latter.
+	const INT32 r = SoldierTo3DLocationLineOfSightTest(
+		sel, tgt.gridno, lvl, cube, /*sight cap*/ 255, /*aware*/ TRUE);
+
+	if (r > 0)
+	{
+		if (dist <= envelope)
+		{
+			Console_Println(ST::format(
+				"los: {} at {}, {} tiles. Clear LOS.", label, off, dist));
+		}
+		else
+		{
+			Console_Println(ST::format(
+				"los: {} at {}, {} tiles. Lane clear, but beyond sight range "
+				"(envelope {} tiles {}).",
+				label, off, dist,
+				static_cast<int>(envelope), directionWord(dir_to)));
+		}
+		return;
+	}
+
+	const LosBlocker blk    = findLineBlocker(*sel, tgt.gridno, lvl, cube);
+	const ST::string blkOff = formatOffset(sel->sGridNo, blk.gridno);
+	Console_Println(ST::format(
+		"los: {} at {}, {} tiles. Blocked by {} at {} (step {} of {}).",
+		label, off, dist, blk.label, blkOff,
+		blk.first_blocked_step, blk.total_steps));
 }
 
 namespace
