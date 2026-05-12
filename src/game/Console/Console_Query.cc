@@ -539,15 +539,54 @@ namespace
 		                  roomSuffix(observer, c.gridno));
 	}
 
-	// Destructibles: features the damage system can actually break --
-	// walls, windows, fences, trees, vehicles, explosive props. Doors
-	// and containers have their own categories (`d` / `k`); switches /
-	// lights / generic furniture are theoretically destructible but
-	// rarely tactically interesting, so we omit them to keep the list
-	// tight. The classification mirrors DamageLog's NounClass for the
-	// HP-bearing kinds and adds a "window" pseudo-noun for STRUCTURE_
-	// WALLNWINDOW (handled by WindowHit, not DamageStructure -- see
-	// DamageLog_Hooks.cc:ClassifyNoun).
+	// Canonical structure taxonomy shared by every verb that needs to
+	// say "what is this thing in the world?". Ten kinds covering the
+	// engine's full STRUCTURE_* surface; callers pick the subset they
+	// care about and format their own labels (capitalization, state,
+	// material adjective, edge orientation — those are verb-specific).
+	//
+	// Priority order matters and mirrors DamageLog_Hooks.cc:ClassifyNoun:
+	// EXPLOSIVE outranks the wall/openable bits gas tanks also carry,
+	// because the explosive-headline property is what callers want to
+	// surface ("gas tank" beats "wall" or "container" for the same
+	// world object).
+	enum class StructureKind : UINT8
+	{
+		Door,       // STRUCTURE_ANYDOOR — closed-or-open carried separately
+		Explosive,  // STRUCTURE_EXPLOSIVE — gas tanks, red barrels
+		Vehicle,    // STRUCTURE_VEHICLE
+		Tree,       // STRUCTURE_TREE
+		Fence,      // STRUCTURE_ANYFENCE = FENCE | WIREFENCE
+		Window,     // STRUCTURE_WALLNWINDOW — wall with embedded window
+		Wall,       // STRUCTURE_WALL — plain wall, after WALLNWINDOW filtered
+		Switch,     // STRUCTURE_SWITCH
+		Container,  // STRUCTURE_OPENABLE without ANYDOOR — lockers, cabinets
+		Obstacle,   // STRUCTURE_GENERIC / anything else still classifiable
+	};
+
+	bool classifyStructure(STRUCTURE const* s, StructureKind& out)
+	{
+		if (s == nullptr) return false;
+		const UINT32 f = s->fFlags;
+		if (!(f & STRUCTURE_BASE_TILE)) return false;
+		if (f & (STRUCTURE_PERSON | STRUCTURE_CORPSE)) return false;
+		if (f & STRUCTURE_ANYDOOR)     { out = StructureKind::Door;      return true; }
+		if (f & STRUCTURE_EXPLOSIVE)   { out = StructureKind::Explosive; return true; }
+		if (f & STRUCTURE_VEHICLE)     { out = StructureKind::Vehicle;   return true; }
+		if (f & STRUCTURE_TREE)        { out = StructureKind::Tree;      return true; }
+		if (f & STRUCTURE_ANYFENCE)    { out = StructureKind::Fence;     return true; }
+		if (f & STRUCTURE_WALLNWINDOW) { out = StructureKind::Window;    return true; }
+		if (f & STRUCTURE_WALL)        { out = StructureKind::Wall;      return true; }
+		if (f & STRUCTURE_SWITCH)      { out = StructureKind::Switch;    return true; }
+		if (f & STRUCTURE_OPENABLE)    { out = StructureKind::Container; return true; }
+		out = StructureKind::Obstacle;
+		return true;
+	}
+
+	// Destructibles: HP-bearing kinds the damage system can break.
+	// Subset of StructureKind; the destructibles list also wants doors
+	// / containers / switches / obstacles filtered out (each has its
+	// own surface elsewhere).
 	enum class DestNoun : UINT8
 	{
 		Wall, Window, Fence, Tree, Vehicle, Explosive
@@ -592,30 +631,29 @@ namespace
 		}
 	}
 
-	// Classify a single base-tile structure into a DestNoun, or return
-	// false if the structure isn't a destructible we want to surface.
-	// Order matters: STRUCTURE_EXPLOSIVE wins over WALLSTUFF because gas
-	// tanks and red barrels can carry wallstuff bits in the engine data
-	// (matches DamageLog_Hooks.cc:ClassifyNoun's ordering). Doors and
-	// containers are handled by their own categories so we exclude
-	// STRUCTURE_ANYDOOR and OPENABLE.
+	// Destructibles adapter: keep only the HP-bearing kinds the damage
+	// system actually breaks. Doors, switches, containers, and plain
+	// obstacles each have their own surface; the destructibles list
+	// (`nearby destructibles`, the `v<N>` tag namespace) stays focused
+	// on what the player can target with grenades / shaped charges.
 	bool classifyDestructible(STRUCTURE const* s, DestNoun& out)
 	{
-		if (s == nullptr) return false;
-		const UINT32 f = s->fFlags;
-		if (f & (STRUCTURE_PERSON | STRUCTURE_CORPSE)) return false;
-		if (f & STRUCTURE_ANYDOOR)                     return false;
-		if (f & STRUCTURE_EXPLOSIVE)   { out = DestNoun::Explosive; return true; }
-		if (f & STRUCTURE_VEHICLE)     { out = DestNoun::Vehicle;   return true; }
-		if (f & STRUCTURE_TREE)        { out = DestNoun::Tree;      return true; }
-		if (f & (STRUCTURE_FENCE | STRUCTURE_WIREFENCE))
-		                               { out = DestNoun::Fence;     return true; }
-		if (f & STRUCTURE_WALLNWINDOW) { out = DestNoun::Window;    return true; }
-		if (f & STRUCTURE_WALLSTUFF)   { out = DestNoun::Wall;      return true; }
-		// Plain STRUCTURE_OPENABLE without WALLSTUFF/etc. is a container;
-		// already covered by `nearby containers`. Plain STRUCTURE_GENERIC
-		// is everything else (signs, decorations) -- skip to keep the
-		// list focused on tactically-interesting destruction targets.
+		StructureKind kind;
+		if (!classifyStructure(s, kind)) return false;
+		switch (kind)
+		{
+			case StructureKind::Explosive: out = DestNoun::Explosive; return true;
+			case StructureKind::Vehicle:   out = DestNoun::Vehicle;   return true;
+			case StructureKind::Tree:      out = DestNoun::Tree;      return true;
+			case StructureKind::Fence:     out = DestNoun::Fence;     return true;
+			case StructureKind::Window:    out = DestNoun::Window;    return true;
+			case StructureKind::Wall:      out = DestNoun::Wall;      return true;
+			case StructureKind::Door:
+			case StructureKind::Switch:
+			case StructureKind::Container:
+			case StructureKind::Obstacle:
+				return false;
+		}
 		return false;
 	}
 
@@ -1757,47 +1795,34 @@ namespace
 			if (f & STRUCTURE_NORMAL_ROOF)     continue;
 
 			const bool isOpen     = (f & STRUCTURE_OPEN)     != 0;
-			const bool isOpenable = (f & STRUCTURE_OPENABLE) != 0;
 			const bool isPassable = (f & STRUCTURE_PASSABLE) != 0;
 
+			StructureKind sk;
+			if (!classifyStructure(s, sk)) continue;
+
 			ST::string kind;
-			if (f & STRUCTURE_ANYDOOR)
+			switch (sk)
 			{
-				kind = isOpen ? "Open door" : "Closed door";
-				if (s->ubLockStrength > 0) kind += " (locked)";
-			}
-			else if (f & STRUCTURE_WALLNWINDOW)
-			{
-				kind = isOpen ? "Wall with open window" : "Wall with closed window";
-			}
-			else if (f & STRUCTURE_WALL)
-			{
-				kind = "Wall";
-			}
-			else if (f & STRUCTURE_ANYFENCE)
-			{
-				kind = "Fence";
-			}
-			else if (f & STRUCTURE_TREE)
-			{
-				kind = "Tree";
-			}
-			else if (f & STRUCTURE_VEHICLE)
-			{
-				kind = "Vehicle";
-			}
-			else if (f & STRUCTURE_SWITCH)
-			{
-				kind = isOpen ? "Switch (on)" : "Switch (off)";
-			}
-			else if (isOpenable)
-			{
-				kind = isOpen ? "Container (open)" : "Container (closed)";
-				if (s->ubLockStrength > 0) kind += " (locked)";
-			}
-			else
-			{
-				kind = "Obstacle";
+				case StructureKind::Door:
+					kind = isOpen ? "Open door" : "Closed door";
+					if (s->ubLockStrength > 0) kind += " (locked)";
+					break;
+				case StructureKind::Window:
+					kind = isOpen ? "Wall with open window" : "Wall with closed window";
+					break;
+				case StructureKind::Wall:      kind = "Wall";      break;
+				case StructureKind::Fence:     kind = "Fence";     break;
+				case StructureKind::Tree:      kind = "Tree";      break;
+				case StructureKind::Vehicle:   kind = "Vehicle";   break;
+				case StructureKind::Explosive: kind = "Gas tank";  break;
+				case StructureKind::Switch:
+					kind = isOpen ? "Switch (on)" : "Switch (off)";
+					break;
+				case StructureKind::Container:
+					kind = isOpen ? "Container (open)" : "Container (closed)";
+					if (s->ubLockStrength > 0) kind += " (locked)";
+					break;
+				case StructureKind::Obstacle:  kind = "Obstacle";  break;
 			}
 
 			// Cube extent: bottom = sCubeOffset; height = StructureHeight (1..4).
@@ -2522,35 +2547,40 @@ namespace
 		return 0;
 	}
 
-	// Sight-blocker classifier: priority-ordered identification of what
-	// stopped the LOS ray at this tile. Doors are checked first because
-	// they block sight when closed and aren't covered by
-	// classifyDestructible (which filters them out for the destructibles
-	// list -- doors are their own category there). Closed-state is
-	// implicit: open doors don't oppose LOS, so a door showing up here
-	// from a failed ray is closed by definition. The "obstruction"
-	// fallback catches roof-collision, ground elevation, and multi-cube
-	// blockers we don't otherwise recognize.
+	// Sight-blocker label for the tile where an LOS ray died. Walks
+	// pStructureHead through the shared classifyStructure and renders
+	// a lowercase noun phrase for the first matching structure. Doors
+	// reaching this point are closed by definition (open doors don't
+	// oppose LOS, so the ray would not have died here). "obstruction"
+	// is reserved for the case where we found no classifiable structure
+	// at the failing tile -- roof clipping, ground elevation, or a
+	// blocker the classifier hasn't been taught about.
 	ST::string describeSightBlocker(GridNo g)
 	{
 		if (g < 0 || g >= WORLD_MAX) return ST::string{"obstruction"};
 		for (STRUCTURE* s = gpWorldLevelData[g].pStructureHead; s; s = s->pNext)
 		{
-			if (!(s->fFlags & STRUCTURE_BASE_TILE)) continue;
-			const UINT32 f = s->fFlags;
-			if (f & STRUCTURE_ANYDOOR)     return ST::string{"closed door"};
-			if (f & STRUCTURE_TREE)        return ST::string{"tree"};
-			if (f & (STRUCTURE_FENCE | STRUCTURE_WIREFENCE)) return ST::string{"fence"};
-			if (f & STRUCTURE_VEHICLE)     return ST::string{"vehicle"};
-			if (f & STRUCTURE_EXPLOSIVE)   return ST::string{"gas tank"};
-			if (f & STRUCTURE_WALLNWINDOW) return ST::string{"window"};
-			if (f & STRUCTURE_WALLSTUFF)
+			StructureKind kind;
+			if (!classifyStructure(s, kind)) continue;
+			switch (kind)
 			{
-				const UINT8 mat = (s->pDBStructureRef && s->pDBStructureRef->pDBStructure)
-				                  ? s->pDBStructureRef->pDBStructure->ubArmour
-				                  : MATERIAL_NOTHING;
-				const char* const adj = destMaterialAdjective(mat);
-				return adj[0] ? ST::format("{} wall", adj) : ST::string{"wall"};
+				case StructureKind::Door:      return ST::string{"closed door"};
+				case StructureKind::Explosive: return ST::string{"gas tank"};
+				case StructureKind::Vehicle:   return ST::string{"vehicle"};
+				case StructureKind::Tree:      return ST::string{"tree"};
+				case StructureKind::Fence:     return ST::string{"fence"};
+				case StructureKind::Window:    return ST::string{"window"};
+				case StructureKind::Wall:
+				{
+					const UINT8 mat = (s->pDBStructureRef && s->pDBStructureRef->pDBStructure)
+					                  ? s->pDBStructureRef->pDBStructure->ubArmour
+					                  : MATERIAL_NOTHING;
+					const char* const adj = destMaterialAdjective(mat);
+					return adj[0] ? ST::format("{} wall", adj) : ST::string{"wall"};
+				}
+				case StructureKind::Switch:    return ST::string{"switch"};
+				case StructureKind::Container: return ST::string{"container"};
+				case StructureKind::Obstacle:  return ST::string{"obstacle"};
 			}
 		}
 		return ST::string{"obstruction"};
