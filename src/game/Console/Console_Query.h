@@ -24,6 +24,7 @@ void Cmd_Tile     (const std::vector<std::string>& args);
 void Cmd_Room     (const std::vector<std::string>& args);
 void Cmd_Cth      (const std::vector<std::string>& args);
 void Cmd_Cover    (const std::vector<std::string>& args);
+void Cmd_Sight    (const std::vector<std::string>& args);
 void Cmd_Inventory(const std::vector<std::string>& args);
 void Cmd_Examine  (const std::vector<std::string>& args);
 void Cmd_Path     (const std::vector<std::string>& args);

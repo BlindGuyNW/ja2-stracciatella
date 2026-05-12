@@ -52,6 +52,7 @@ namespace
 		{ "room",      &Cmd_Room,       "room [id] — bounding box, doors, occupants, items for the merc's current room (or one by ID)" },
 		{ "cth",       &Cmd_Cth,        "cth <target> — chance-to-hit and AP cost at aim 0..4 (gun or throwing knife)" },
 		{ "cover",     &Cmd_Cover,      "cover [target] — per-stance cover at a tile; 'cover scan [N]' for the radius field" },
+		{ "sight",     &Cmd_Sight,      "sight — selected merc's outgoing vision: envelope + per-direction blockers (closed doors, walls, trees, ...)" },
 		{ "inventory",  &Cmd_Inventory,  "inventory [name] — slots, ammo, and reload sources"      },
 		{ "examine",    &Cmd_Examine,    "examine <slot> — describe an inventory item (s1..s19)"   },
 		{ "path",       &Cmd_Path,       "path <target> — route AP cost from selected"            },

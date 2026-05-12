@@ -10,6 +10,7 @@
 #include "CalibreModel.h"
 #include "ContentManager.h"
 #include "DisplayCover.h"
+#include "Environment.h"
 #include "Exit_Grids.h"
 #include "ExplosiveModel.h"
 #include "GameInstance.h"
@@ -22,6 +23,7 @@
 #include "Items.h"
 #include "Keys.h"
 #include "LOS.h"
+#include "Lighting.h"
 #include "MagazineModel.h"
 #include "SmokeEffectModel.h"
 #include "Map_Edgepoints.h"
@@ -2448,6 +2450,289 @@ static void RunCoverScan(SOLDIERTYPE& sel, int radius)
 			parts += ST::format("{} {}", exposedByDir[d], directionWord(d));
 		}
 		Console_Println(ST::format("Exposed within {}: {}.", radius, parts));
+	}
+}
+
+namespace
+{
+	// Day/night/dusk descriptor from a tile's true light value.
+	// NORMAL_LIGHTLEVEL_DAY=3 and NORMAL_LIGHTLEVEL_NIGHT=12 anchor the
+	// engine's dark/light scale (Environment.h).
+	const char* lightPhase(UINT8 level)
+	{
+		if (level <= NORMAL_LIGHTLEVEL_DAY)   return "Day";
+		if (level >= NORMAL_LIGHTLEVEL_NIGHT) return "Night";
+		return "Dusk/dawn";
+	}
+
+	// Active weather that actually moves sight. Rain/thunder applies a
+	// ×0.7 multiplier inside AdjustMaxSightRangeForEnvEffects
+	// (OppList.cc:240); other forecasts don't affect DistanceVisible.
+	const char* sightAffectingWeather(UINT32 env)
+	{
+		if (env & WEATHER_FORECAST_THUNDERSHOWERS) return "thundershowers";
+		if (env & WEATHER_FORECAST_SHOWERS)        return "showers";
+		return nullptr;
+	}
+
+	const char* visionGearLabel(const SOLDIERTYPE& s)
+	{
+		if (IsWearingHeadGear(s, UVGOGGLES))    return "UV goggles";
+		if (IsWearingHeadGear(s, NIGHTGOGGLES)) return "nightvision goggles";
+		if (IsWearingHeadGear(s, SUNGOGGLES))   return "sunglasses";
+		return "none";
+	}
+
+	// An in-bounds gridno one tile from the merc in `dir`, falling back to
+	// the opposite direction if the primary lands off-map. DistanceVisible
+	// uses this only for the light read at the subject tile and the
+	// muzzleflash check — the cone bucket comes from `bSubjectDir` directly.
+	// A non-self gridno is required to avoid the same-tile short-circuit
+	// at OppList.cc:920 that would return MaxDistanceVisible.
+	INT16 syntheticSubjectGridno(INT16 fromGridno, UINT8 dir)
+	{
+		INT16 syn = fromGridno + DirIncrementer[dir];
+		if (syn >= 0 && syn < WORLD_MAX) return syn;
+		syn = fromGridno + DirIncrementer[OppositeDirection(dir)];
+		if (syn >= 0 && syn < WORLD_MAX) return syn;
+		return fromGridno;
+	}
+
+	// Grid-step count from `from` to the map edge along `dir`. Computed
+	// analytically from col/row rather than walked, so this is O(1).
+	int stepsToMapEdge(GridNo from, UINT8 dir)
+	{
+		const int col        = from % WORLD_COLS;
+		const int row        = from / WORLD_COLS;
+		const int rightSpace = WORLD_COLS - 1 - col;
+		const int leftSpace  = col;
+		const int downSpace  = WORLD_ROWS - 1 - row;
+		const int upSpace    = row;
+		switch (dir)
+		{
+			case NORTH:     return upSpace;
+			case NORTHEAST: return std::min(upSpace,   rightSpace);
+			case EAST:      return rightSpace;
+			case SOUTHEAST: return std::min(downSpace, rightSpace);
+			case SOUTH:     return downSpace;
+			case SOUTHWEST: return std::min(downSpace, leftSpace);
+			case WEST:      return leftSpace;
+			case NORTHWEST: return std::min(upSpace,   leftSpace);
+		}
+		return 0;
+	}
+
+	// Sight-blocker classifier: priority-ordered identification of what
+	// stopped the LOS ray at this tile. Doors are checked first because
+	// they block sight when closed and aren't covered by
+	// classifyDestructible (which filters them out for the destructibles
+	// list -- doors are their own category there). Closed-state is
+	// implicit: open doors don't oppose LOS, so a door showing up here
+	// from a failed ray is closed by definition. The "obstruction"
+	// fallback catches roof-collision, ground elevation, and multi-cube
+	// blockers we don't otherwise recognize.
+	ST::string describeSightBlocker(GridNo g)
+	{
+		if (g < 0 || g >= WORLD_MAX) return ST::string{"obstruction"};
+		for (STRUCTURE* s = gpWorldLevelData[g].pStructureHead; s; s = s->pNext)
+		{
+			if (!(s->fFlags & STRUCTURE_BASE_TILE)) continue;
+			const UINT32 f = s->fFlags;
+			if (f & STRUCTURE_ANYDOOR)     return ST::string{"closed door"};
+			if (f & STRUCTURE_TREE)        return ST::string{"tree"};
+			if (f & (STRUCTURE_FENCE | STRUCTURE_WIREFENCE)) return ST::string{"fence"};
+			if (f & STRUCTURE_VEHICLE)     return ST::string{"vehicle"};
+			if (f & STRUCTURE_EXPLOSIVE)   return ST::string{"gas tank"};
+			if (f & STRUCTURE_WALLNWINDOW) return ST::string{"window"};
+			if (f & STRUCTURE_WALLSTUFF)
+			{
+				const UINT8 mat = (s->pDBStructureRef && s->pDBStructureRef->pDBStructure)
+				                  ? s->pDBStructureRef->pDBStructure->ubArmour
+				                  : MATERIAL_NOTHING;
+				const char* const adj = destMaterialAdjective(mat);
+				return adj[0] ? ST::format("{} wall", adj) : ST::string{"wall"};
+			}
+		}
+		return ST::string{"obstruction"};
+	}
+
+	struct SightBlocker
+	{
+		bool       blocked;
+		int        first_blocked_step; // grid-steps from merc, 1-indexed
+		GridNo     blocker_gridno;
+		ST::string label;
+	};
+
+	// Binary-search the first blocked step along `dir`. Calls
+	// SoldierTo3DLocationLineOfSightTest against progressively closer
+	// targets; the function returns 0 for blocked, positive for the
+	// cover-adjusted distance achieved when the ray reaches the target.
+	// Cube level 2 (chest) matches what `cth` / `cover` use as a generic
+	// "is there a standing-target lane here" probe. Aware=TRUE skips the
+	// triple-cost-vegetation penalty the engine applies to unaware
+	// lookers (LOS.cc:671) -- we're asking what the merc can deliberately
+	// spot, not what they'd miss while doing something else.
+	SightBlocker findSightBlocker(const SOLDIERTYPE& sel, UINT8 dir, INT16 envelope)
+	{
+		SightBlocker out{};
+		if (envelope <= 0) return out;
+
+		// Max grid-step count along this direction such that the target
+		// stays within the Euclidean envelope. Diagonals cover sqrt(2)
+		// Euclidean per grid step -- use 1414/1000 as the integer-math
+		// approximation matching the engine's pathfinding diagonal-bias
+		// (PathAI.cc:1338 uses *14/10 = 1.4 for the same reason).
+		const bool isDiag = (dir & 1);
+		int max_steps = isDiag ? (envelope * 1000) / 1414 : envelope;
+		max_steps = std::min(max_steps, stepsToMapEdge(sel.sGridNo, dir));
+		if (max_steps <= 0) return out;
+
+		auto losAtStep = [&](int step) -> bool
+		{
+			const INT16 target = static_cast<INT16>(
+				sel.sGridNo + step * DirIncrementer[dir]);
+			const INT32 r = SoldierTo3DLocationLineOfSightTest(
+				&sel, target, sel.bLevel, /*cube*/ 2,
+				/*sight cap*/ 255, /*aware*/ TRUE);
+			return r > 0;
+		};
+
+		// Fast path: LOS clear at the envelope edge -> no blocker.
+		if (losAtStep(max_steps))
+		{
+			out.blocked = false;
+			return out;
+		}
+
+		// Find the largest step count that still reads clear. We know
+		// max_steps fails; lo=0 represents "even step 1 fails" (the
+		// blocker is the merc's immediate neighbor).
+		int lo = 0, hi = max_steps;
+		while (lo < hi)
+		{
+			const int mid = (lo + hi + 1) / 2;
+			if (losAtStep(mid)) lo = mid;
+			else                hi = mid - 1;
+		}
+
+		out.blocked            = true;
+		out.first_blocked_step = lo + 1;
+		out.blocker_gridno     = static_cast<INT16>(
+			sel.sGridNo + out.first_blocked_step * DirIncrementer[dir]);
+		out.label              = describeSightBlocker(out.blocker_gridno);
+		return out;
+	}
+}
+
+void Cmd_Sight(const std::vector<std::string>&)
+{
+	SOLDIERTYPE* const sel = requireSelectedMerc();
+	if (!sel) return;
+
+	const UINT8 light    = LightTrueLevel(sel->sGridNo, sel->bLevel);
+	const int   lightPct = (light < 16) ? gbLightSighting[0][light] : 0;
+	const char* weather  = sightAffectingWeather(guiEnvWeather);
+	const char* gear     = visionGearLabel(*sel);
+
+	if (weather != nullptr)
+	{
+		Console_Println(ST::format(
+			"sight: {} facing {}, {}. {} (light {}, {}%), {}. Vision gear: {}.",
+			sel->name, directionWord(sel->bDirection), stanceWord(*sel),
+			lightPhase(light), static_cast<int>(light), lightPct, weather, gear));
+	}
+	else
+	{
+		Console_Println(ST::format(
+			"sight: {} facing {}, {}. {} (light {}, {}%). Vision gear: {}.",
+			sel->name, directionWord(sel->bDirection), stanceWord(*sel),
+			lightPhase(light), static_cast<int>(light), lightPct, gear));
+	}
+
+	// Flashbang blindness short-circuits DistanceVisible to 0 in every
+	// direction (OppList.cc:899) -- skip the per-direction loop, it would
+	// just print blind eight times.
+	if (sel->bBlindedCounter > 0)
+	{
+		Console_Println(ST::format(
+			"  Blinded ({} more turns); sight 0 in all directions.",
+			static_cast<int>(sel->bBlindedCounter)));
+		return;
+	}
+
+	// Effective sight per direction. DistanceVisible folds the facing-cone
+	// lookup (gbLookDistance), the OUR_TEAM ANGLE->STRAIGHT promotion, light
+	// scaling, weather, vision gear, running penalty, and roof bonus into
+	// one number.
+	INT16 ranges[NUM_WORLD_DIRECTIONS] = { 0 };
+	for (UINT8 d = 0; d < NUM_WORLD_DIRECTIONS; ++d)
+	{
+		const INT16 syn = syntheticSubjectGridno(sel->sGridNo, d);
+		ranges[d] = DistanceVisible(sel, sel->bDirection, d, syn, sel->bLevel);
+	}
+
+	// Per-direction LOS scan: for every direction with positive envelope,
+	// binary-search outward for the first blocked tile and identify the
+	// structure there. Eight directions * ~log2(envelope) LOS calls each;
+	// SoldierTo3DLocationLineOfSightTest walks the ray once per call.
+	SightBlocker blockers[NUM_WORLD_DIRECTIONS] = {};
+	for (UINT8 d = 0; d < NUM_WORLD_DIRECTIONS; ++d)
+	{
+		if (ranges[d] > 0) blockers[d] = findSightBlocker(*sel, d, ranges[d]);
+	}
+
+	// Output in three passes so the reader gets a stable structure:
+	// (1) Clear lanes, grouped by envelope range, longest first.
+	// (2) Blocked lanes, each on its own line, clockwise from N.
+	// (3) Blind directions (rear arc), grouped on one line.
+	bool printed[NUM_WORLD_DIRECTIONS] = { false };
+
+	// Pass 1: clear groups, longest range first.
+	for (;;)
+	{
+		bool  found = false;
+		INT16 best  = 0;
+		for (UINT8 d = 0; d < NUM_WORLD_DIRECTIONS; ++d)
+		{
+			if (printed[d] || ranges[d] == 0 || blockers[d].blocked) continue;
+			if (!found || ranges[d] > best) { best = ranges[d]; found = true; }
+		}
+		if (!found) break;
+
+		ST::string dirs;
+		for (UINT8 d = 0; d < NUM_WORLD_DIRECTIONS; ++d)
+		{
+			if (printed[d] || ranges[d] != best || blockers[d].blocked) continue;
+			if (!dirs.empty()) dirs += ", ";
+			dirs += directionWord(d);
+			printed[d] = true;
+		}
+		Console_Println(ST::format("  {}: {} tiles.", dirs, static_cast<int>(best)));
+	}
+
+	// Pass 2: blocked lanes in clockwise order.
+	for (UINT8 d = 0; d < NUM_WORLD_DIRECTIONS; ++d)
+	{
+		if (printed[d] || !blockers[d].blocked) continue;
+		const ST::string off = formatOffset(sel->sGridNo, blockers[d].blocker_gridno);
+		Console_Println(ST::format("  {}: {} at {} (envelope {} tiles).",
+			directionWord(d), blockers[d].label, off,
+			static_cast<int>(ranges[d])));
+		printed[d] = true;
+	}
+
+	// Pass 3: blind directions.
+	ST::string blindDirs;
+	for (UINT8 d = 0; d < NUM_WORLD_DIRECTIONS; ++d)
+	{
+		if (printed[d] || ranges[d] != 0) continue;
+		if (!blindDirs.empty()) blindDirs += ", ";
+		blindDirs += directionWord(d);
+	}
+	if (!blindDirs.empty())
+	{
+		Console_Println(ST::format("  {}: blind.", blindDirs));
 	}
 }
 
