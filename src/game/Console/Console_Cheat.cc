@@ -17,6 +17,7 @@
 #include "Queen_Command.h"
 #include "Soldier_Control.h"
 #include "Soldier_Macros.h"
+#include "TeamTurns.h"
 #include "Text.h"
 #include "Types.h"
 
@@ -435,6 +436,74 @@ namespace
 			level == 0 ? "ground" : "roof"));
 	}
 
+	// Synthesize an our-team interrupt against the target so the
+	// StartInterrupt narration hook can be exercised without depending
+	// on the AI rolling a winning duel score (rookie enemies almost
+	// never beat experienced mercs in CalcInterruptDuelPts). Uses the
+	// engine's public funnel (AddToIntList + DoneAddingToIntList) so
+	// the queue state matches what ResolveInterruptsVs would produce
+	// naturally. Gated on INCOMBAT (the engine itself ignores
+	// interrupts outside combat) and on the target being a different
+	// team + alive.
+	void cheatInterrupt(const ArgList& args)
+	{
+		if (!(gTacticalStatus.uiFlags & INCOMBAT))
+		{
+			Console_Println(
+				"refusing to synthesize interrupt outside combat — "
+				"the engine only resolves interrupts INCOMBAT.");
+			return;
+		}
+		SOLDIERTYPE* const sel = GetSelectedMan();
+		if (sel == nullptr)
+		{
+			Console_Println("No merc selected.");
+			return;
+		}
+		if (args.size() < 3)
+		{
+			Console_Println("usage: cheat interrupt <target-soldier>");
+			return;
+		}
+
+		Target tgt{};
+		ST::string err;
+		if (parseTarget(args, 2, sel, tgt, err) == 0)
+		{
+			Console_Println(err);
+			return;
+		}
+		if (tgt.soldier == nullptr)
+		{
+			Console_Println(
+				"interrupt target must resolve to a soldier "
+				"(name or eN/cN/mN tag).");
+			return;
+		}
+		if (tgt.soldier->bTeam == sel->bTeam)
+		{
+			Console_Println(
+				"interrupt target must be on a different team than "
+				"the selected merc.");
+			return;
+		}
+		if (tgt.soldier->bLife < OKLIFE)
+		{
+			Console_Println(
+				ST::format("{} is incapacitated; can't interrupt.",
+					tgt.soldier->name));
+			return;
+		}
+
+		// Target loses control; selected merc gains it.
+		AddToIntList(tgt.soldier, FALSE, TRUE);
+		AddToIntList(sel, TRUE, TRUE);
+		DoneAddingToIntList();
+		Console_Println(ST::format(
+			"Interrupt queued: {} caught {}.",
+			sel->name, tgt.soldier->name));
+	}
+
 	struct Entry
 	{
 		const char* name;
@@ -453,6 +522,7 @@ namespace
 		{ "impemail", &cheatImpEmail, "impemail — deliver the IMP profile-results email now (normally arrives day+2 at 07:00)" },
 		{ "give",     &cheatGive,     "give <item-name|id> [count] — materialize an item in the selected merc's inventory" },
 		{ "boom",     &cheatBoom,     "boom <target> [item-name|id] — ignite an explosion at a tile (default: HAND_GRENADE); selected merc as owner" },
+		{ "interrupt",&cheatInterrupt,"interrupt <target> — synthesize an our-team interrupt against the target (exercises the narration hook)" },
 	};
 
 	void listCheats()

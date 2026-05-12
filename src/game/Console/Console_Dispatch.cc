@@ -99,7 +99,7 @@ namespace
 		{ "web",       &Cmd_Web,        "web | web <name> — list or open a bookmarked laptop site (laptop only)" },
 		{ "g",         &Cmd_Gui,        "g list | g click <id> — enumerate or click visible buttons" },
 		{ "r",         &Cmd_Rows,       "r list | r click <id> — enumerate or click rendered text rows" },
-		{ "cheat",     &Cmd_Cheat,      "cheat | cheat <name> — dev unlocks (e.g. 'cheat bobbyr')"  },
+		{ "cheat",     &Cmd_Cheat,      "cheat | cheat <name> — dev unlocks (e.g. 'cheat bobbyr', 'cheat interrupt')"  },
 		{ "debug",     &Cmd_Debug,      "debug [summary|structures|items|world|civs] — world-state diagnostics" },
 	};
 

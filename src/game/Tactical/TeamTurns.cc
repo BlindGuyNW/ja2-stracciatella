@@ -39,6 +39,15 @@
 #include "Items.h"
 #include "Logger.h"
 
+// Accessibility narration: interrupt events are the canonical "something
+// happened outside your input" moment in tactical play. The existing
+// ScreenMsg "Interrupt for X" only lists our interrupters; the camera
+// slide to gLastInterruptedGuy is the sighted analogue for "what set this
+// off". SR users get neither — these hooks fill that gap.
+#include "Accessibility.h"
+#include "Console_Address.h"
+#include "Console_Visibility.h"
+
 // for that single policy check :|
 #include "GamePolicy.h"
 #include "ContentManager.h"
@@ -413,6 +422,28 @@ void DisplayHiddenInterrupt( SOLDIERTYPE * pSoldier )
 	AddTopMessage(msg);
 
 	gfHiddenInterrupt = FALSE;
+
+	// Accessibility: the top-banner flip above is the sighted player's
+	// "they got an interrupt on us" cue (was COMPUTER_TURN, now reads
+	// "Interrupt!" in red). Mirror it for SR users. pSoldier is the
+	// interrupter (always visible here — this function only fires once
+	// the AI does something visible); gLastInterruptedGuy is our merc
+	// whose action drew the interrupt.
+	const char* who = pSoldier->bTeam == MILITIA_TEAM ? "Militia" : "Enemy";
+	const ST::string label = ConsoleVis::IsKnownSoldier(*pSoldier)
+		? ST::string(pSoldier->name)
+		: ST::string("Unseen");
+	if (gLastInterruptedGuy != NULL)
+	{
+		const ST::string offset = formatOffset(
+			gLastInterruptedGuy->sGridNo, pSoldier->sGridNo);
+		AX_Say(ST::format("{} interrupt: {} caught {} at {}.",
+			who, label, gLastInterruptedGuy->name, offset));
+	}
+	else
+	{
+		AX_Say(ST::format("{} interrupt: {}.", who, label));
+	}
 }
 
 void DisplayHiddenTurnbased( SOLDIERTYPE * pActingSoldier )
@@ -579,6 +610,21 @@ static void StartInterrupt(void)
 		if (!sTemp.empty())
 		{
 			ScreenMsg(FONT_MCOLOR_LTYELLOW, MSG_INTERFACE, sTemp);
+		}
+
+		// Accessibility: the ScreenMsg above lists our interrupters but
+		// not the trigger merc (camera slide to gLastInterruptedGuy is
+		// the sighted analogue). Gate the trigger's name on the team-
+		// known channel: sight interrupts will read true (the engine
+		// just registered the sighting); noise / off-LOS interrupts
+		// stay opaque, matching what a sighted player gets.
+		if (gLastInterruptedGuy != NULL &&
+			ConsoleVis::IsKnownSoldier(*gLastInterruptedGuy))
+		{
+			const ST::string offset = formatOffset(
+				first_interrupter->sGridNo, gLastInterruptedGuy->sGridNo);
+			AX_Say(ST::format("Interrupt: {} caught {} at {}.",
+				first_interrupter->name, gLastInterruptedGuy->name, offset));
 		}
 
 		SLOGD("INTERRUPT: starting interrupt for {}", first_interrupter->ubID);
