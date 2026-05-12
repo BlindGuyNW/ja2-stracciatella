@@ -1244,16 +1244,27 @@ namespace
 	// must match the order ConsoleTags::resolve indexes by — both call
 	// sites route through this helper (or its frontiers analogue) so the
 	// ordering invariant lives in one place.
+	//
+	// `suppressIfEmpty` collapses genuinely-empty categories to nothing.
+	// Used by the multi-category modes (bare `nearby` / `nearby all`) so
+	// a dozen "(0): (none)" stanzas don't bury the categories with content.
+	// Distance-filtered categories still print: a "(3)" heading with
+	// "(none)" body tells the user there are entries but the cap hid them,
+	// which is different from "no civs anywhere." Returns true if any
+	// output was emitted.
 	template <typename T>
-	void printNearbyCategory(
+	bool printNearbyCategory(
 		const SOLDIERTYPE& observer,
 		INT16              maxDist,
 		const char*        heading,
 		void               (*enumerate)(const SOLDIERTYPE&, std::vector<T>&),
-		ST::string         (*formatLine)(const T&, std::size_t, const SOLDIERTYPE&))
+		ST::string         (*formatLine)(const T&, std::size_t, const SOLDIERTYPE&),
+		bool               suppressIfEmpty = false)
 	{
 		std::vector<T> list;
 		enumerate(observer, list);
+		if (list.empty() && suppressIfEmpty) return false;
+
 		Console_Println(ST::format("{} ({}):", heading, list.size()));
 		// Indices stay aligned with the address parser even when a
 		// distance cap is in effect: enumerate the full distance-sorted
@@ -1268,6 +1279,7 @@ namespace
 			++shown;
 		}
 		if (shown == 0) Console_Println("  (none)");
+		return true;
 	}
 }
 
@@ -1324,18 +1336,27 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 		return;
 	}
 
-	if (wantEnemies)    printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Visible hostiles", enumerateHostiles,     formatHostileLine);
-	if (wantMercs)      printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Teammates",        enumerateTeammates,    formatFriendlyLine);
-	if (wantCivilians)  printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Civilians",        enumerateCivilians,    formatCivilianLine);
-	if (wantItems)      printNearbyCategory<ItemPile>       (*observer, maxDist, "Item piles",       enumerateVisibleItems, formatItemPileLine);
-	if (wantDoors)      printNearbyCategory<ListedDoor>     (*observer, maxDist, "Doors",            enumerateDoors,        formatDoorLine);
-	if (wantContainers) printNearbyCategory<ListedContainer>(*observer, maxDist, "Containers",       enumerateContainers,   formatContainerLine);
-	if (wantExits)      printNearbyCategory<ListedExit>     (*observer, maxDist, "Exits",            enumerateExits,        formatExitLine);
-	if (wantHazards)    printNearbyCategory<ListedHazard>   (*observer, maxDist, "Hazards",          enumerateHazards,      formatHazardLine);
-	if (wantMines)      printNearbyCategory<ListedMine>     (*observer, maxDist, "Mines",            enumerateMines,        formatMineLine);
-	if (wantBombs)      printNearbyCategory<ListedBomb>     (*observer, maxDist, "Placed bombs",     enumerateBombs,        formatBombLine);
+	// Multi-category modes hide categories that come back genuinely
+	// empty (so "Civilians (0): (none)" etc. stop crowding the
+	// tactically-important rows). Single-filter mode (e.g. `nearby civs`)
+	// keeps the "(0)" affirmation -- if you asked specifically, you want
+	// the explicit "checked, none" answer rather than silence.
+	const bool multi      = isDefault || isAll;
+	bool       anyPrinted = false;
+
+	auto run = [&](auto fn) { anyPrinted = fn() || anyPrinted; };
+	if (wantEnemies)    run([&]{ return printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Visible hostiles", enumerateHostiles,     formatHostileLine,    multi); });
+	if (wantMercs)      run([&]{ return printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Teammates",        enumerateTeammates,    formatFriendlyLine,   multi); });
+	if (wantCivilians)  run([&]{ return printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Civilians",        enumerateCivilians,    formatCivilianLine,   multi); });
+	if (wantItems)      run([&]{ return printNearbyCategory<ItemPile>       (*observer, maxDist, "Item piles",       enumerateVisibleItems, formatItemPileLine,   multi); });
+	if (wantDoors)      run([&]{ return printNearbyCategory<ListedDoor>     (*observer, maxDist, "Doors",            enumerateDoors,        formatDoorLine,       multi); });
+	if (wantContainers) run([&]{ return printNearbyCategory<ListedContainer>(*observer, maxDist, "Containers",       enumerateContainers,   formatContainerLine,  multi); });
+	if (wantExits)      run([&]{ return printNearbyCategory<ListedExit>     (*observer, maxDist, "Exits",            enumerateExits,        formatExitLine,       multi); });
+	if (wantHazards)    run([&]{ return printNearbyCategory<ListedHazard>   (*observer, maxDist, "Hazards",          enumerateHazards,      formatHazardLine,     multi); });
+	if (wantMines)      run([&]{ return printNearbyCategory<ListedMine>     (*observer, maxDist, "Mines",            enumerateMines,        formatMineLine,       multi); });
+	if (wantBombs)      run([&]{ return printNearbyCategory<ListedBomb>     (*observer, maxDist, "Placed bombs",     enumerateBombs,        formatBombLine,       multi); });
 	if (wantDestructibles)
-		printNearbyCategory<ListedDestructible>(*observer, maxDist, "Destructibles", enumerateDestructibles, formatDestructibleLine);
+		run([&]{ return printNearbyCategory<ListedDestructible>(*observer, maxDist, "Destructibles", enumerateDestructibles, formatDestructibleLine, multi); });
 	if (wantUnexplored)
 	{
 		// Frontiers carry a preamble (% explored) and a fully-explored
@@ -1372,6 +1393,13 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 			if (shown == 0) Console_Println("  (none within range)");
 		}
 	}
+
+	// Multi-category mode + every category empty -> the console would
+	// otherwise sit silent. Emit one terse line so the user knows the
+	// scan ran and produced nothing, rather than wondering if the verb
+	// hung. The unexplored branch always prints (sector-progress line),
+	// so it never contributes to this case.
+	if (multi && !anyPrinted) Console_Println("Nothing nearby.");
 }
 
 namespace ConsoleTags
