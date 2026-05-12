@@ -504,6 +504,7 @@ namespace
 	{
 		INT16 distance;
 		INT16 gridno;
+		bool  isOpen;
 	};
 
 	// Unlike doors (which are ungated because they're the building's outer
@@ -522,7 +523,11 @@ namespace
 			STRUCTURE* const s = findStructureExcluding(
 				g, STRUCTURE_OPENABLE, STRUCTURE_ANYDOOR | STRUCTURE_SWITCH);
 			if (!s) continue;
-			out.push_back({ SpacesAway(observer.sGridNo, g), g });
+			ListedContainer c{};
+			c.distance = SpacesAway(observer.sGridNo, g);
+			c.gridno   = g;
+			c.isOpen   = (s->fFlags & STRUCTURE_OPEN) != 0;
+			out.push_back(c);
 		}
 		std::sort(out.begin(), out.end(),
 			[](const ListedContainer& a, const ListedContainer& b)
@@ -534,9 +539,54 @@ namespace
 
 	ST::string formatContainerLine(const ListedContainer& c, std::size_t tagN, const SOLDIERTYPE& observer)
 	{
-		return ST::format("  k{} {}: container{}",
+		return ST::format("  k{} {}: container ({}){}",
 		                  tagN, formatOffset(observer.sGridNo, c.gridno),
+		                  c.isOpen ? "open" : "closed",
 		                  roomSuffix(observer, c.gridno));
+	}
+
+	// Containers carry persistent open/closed state (STRUCTURE_OPEN,
+	// saved in the per-sector .tmp map files via SaveLoadMap), so we can
+	// use it as a "have I checked this?" filter. Bare `nearby containers`
+	// is action-oriented — "what's left to investigate?" — and hides
+	// already-opened containers. `nearby all` includes everything,
+	// annotated, for callers who want the kitchen sink. Tag indices stay
+	// stable: k<N> always points to the Nth container in the canonical
+	// enumeration (matching ConsoleTags::resolve), so a `lookat k4` still
+	// resolves correctly even if k4 wasn't printed in the current view.
+	// The heading reports both counts when hiding is in effect, so the
+	// gap in tag numbering isn't surprising.
+	bool printNearbyContainers(const SOLDIERTYPE& observer, INT16 maxDist, bool hideOpen, bool multi)
+	{
+		std::vector<ListedContainer> list;
+		enumerateContainers(observer, list);
+
+		if (list.empty() && multi) return false;
+
+		std::size_t openedCount = 0;
+		for (const auto& c : list) if (c.isOpen) ++openedCount;
+		const std::size_t closedCount = list.size() - openedCount;
+
+		if (hideOpen && openedCount > 0)
+		{
+			Console_Println(ST::format("Containers ({} closed, {} already opened hidden):",
+			                           closedCount, openedCount));
+		}
+		else
+		{
+			Console_Println(ST::format("Containers ({}):", list.size()));
+		}
+
+		std::size_t printed = 0;
+		for (std::size_t i = 0; i < list.size(); ++i)
+		{
+			if (maxDist > 0 && list[i].distance > maxDist) continue;
+			if (hideOpen && list[i].isOpen)                continue;
+			Console_Println(formatContainerLine(list[i], i + 1, observer));
+			++printed;
+		}
+		if (printed == 0) Console_Println("  (none)");
+		return true;
 	}
 
 	// Canonical structure taxonomy shared by every verb that needs to
@@ -1350,7 +1400,15 @@ void Cmd_Nearby(const std::vector<std::string>& args)
 	if (wantCivilians)  run([&]{ return printNearbyCategory<ListedSoldier>  (*observer, maxDist, "Civilians",        enumerateCivilians,    formatCivilianLine,   multi); });
 	if (wantItems)      run([&]{ return printNearbyCategory<ItemPile>       (*observer, maxDist, "Item piles",       enumerateVisibleItems, formatItemPileLine,   multi); });
 	if (wantDoors)      run([&]{ return printNearbyCategory<ListedDoor>     (*observer, maxDist, "Doors",            enumerateDoors,        formatDoorLine,       multi); });
-	if (wantContainers) run([&]{ return printNearbyCategory<ListedContainer>(*observer, maxDist, "Containers",       enumerateContainers,   formatContainerLine,  multi); });
+	if (wantContainers)
+	{
+		// Hide already-opened containers when the user asked specifically
+		// for "containers" (the "what's left to investigate" intent).
+		// `nearby all` includes them annotated, on the principle that the
+		// kitchen-sink dump should hide nothing.
+		const bool hideOpen = (filter == "containers");
+		run([&]{ return printNearbyContainers(*observer, maxDist, hideOpen, multi); });
+	}
 	if (wantExits)      run([&]{ return printNearbyCategory<ListedExit>     (*observer, maxDist, "Exits",            enumerateExits,        formatExitLine,       multi); });
 	if (wantHazards)    run([&]{ return printNearbyCategory<ListedHazard>   (*observer, maxDist, "Hazards",          enumerateHazards,      formatHazardLine,     multi); });
 	if (wantMines)      run([&]{ return printNearbyCategory<ListedMine>     (*observer, maxDist, "Mines",            enumerateMines,        formatMineLine,       multi); });
