@@ -266,12 +266,12 @@ static void CalculateCoverInRadiusAroundGridno(INT16 const sTargetGridNo, int se
 }
 
 
-INT8 CalcCoverForGridNoBasedOnTeamKnownEnemies(SOLDIERTYPE const* const pSoldier, INT16 const sTargetGridNo, INT8 const bStance)
+void EvaluateCoverOpponentsAtGridNo(SOLDIERTYPE const* const pSoldier,
+                                    INT16 const sTargetGridNo,
+                                    INT8 const bStance,
+                                    std::vector<CoverOpponent>& out)
 {
-	// loop through all the enemies and determine the cover
-	INT32 iTotalCoverPoints = 0;
-	INT8  bNumEnemies       = 0;
-	INT32 iHighestValue     = 0;
+	out.clear();
 	FOR_EACH_MERC(i)
 	{
 		SOLDIERTYPE* const pOpponent = *i;
@@ -292,14 +292,25 @@ INT8 CalcCoverForGridNoBasedOnTeamKnownEnemies(SOLDIERTYPE const* const pSoldier
 			continue;
 		}
 
+		// From here on the opponent is "considered" — they enter the
+		// output list with threat=0 by default; the LOS/range/CTH gates
+		// below either upgrade that to a positive contribution or leave
+		// it at zero ("known but blocked").
+		CoverOpponent entry{pOpponent, 0};
+
 		UINT16 const usRange      = GetRangeInCellCoordsFromGridNoDiff(pOpponent->sGridNo, sTargetGridNo);
 		UINT16 const usSightLimit = DistanceVisible(pOpponent, DIRECTION_IRRELEVANT, DIRECTION_IRRELEVANT, sTargetGridNo, pSoldier->bLevel);
 
-		if (usRange > usSightLimit * CELL_X_SIZE) continue;
+		if (usRange > usSightLimit * CELL_X_SIZE)
+		{
+			out.push_back(entry);
+			continue;
+		}
 
 		// if actual LOS check fails, then chance to hit is 0, ignore this guy
 		if (SoldierToVirtualSoldierLineOfSightTest(pOpponent, sTargetGridNo, pSoldier->bLevel, bStance, usSightLimit, TRUE) == 0)
 		{
+			out.push_back(entry);
 			continue;
 		}
 
@@ -310,26 +321,35 @@ INT8 CalcCoverForGridNoBasedOnTeamKnownEnemies(SOLDIERTYPE const* const pSoldier
 		INT32  const iBulletGetThrough = std::clamp(int(((usMaxRange - usRange) / (FLOAT)usMaxRange + .3) * 100), 0, 100);
 		if (iBulletGetThrough > 5 && iGetThrough > 0)
 		{
-			INT32 const iCover = iGetThrough * iBulletGetThrough / 100;
-			if (iHighestValue < iCover) iHighestValue = iCover;
-
-			iTotalCoverPoints += iCover;
-			++bNumEnemies;
+			entry.threat = static_cast<INT8>(iGetThrough * iBulletGetThrough / 100);
 		}
+		out.push_back(entry);
+	}
+}
+
+
+INT8 CalcCoverForGridNoBasedOnTeamKnownEnemies(SOLDIERTYPE const* const pSoldier, INT16 const sTargetGridNo, INT8 const bStance)
+{
+	std::vector<CoverOpponent> opps;
+	EvaluateCoverOpponentsAtGridNo(pSoldier, sTargetGridNo, bStance, opps);
+
+	INT32 iTotalCoverPoints = 0;
+	INT8  bNumEnemies       = 0;
+	INT32 iHighestValue     = 0;
+	for (CoverOpponent const& o : opps)
+	{
+		if (o.threat <= 0) continue;
+		INT32 const iCover = o.threat;
+		if (iHighestValue < iCover) iHighestValue = iCover;
+		iTotalCoverPoints += iCover;
+		++bNumEnemies;
 	}
 
-	INT8 bPercentCoverForGridno;
-	if (bNumEnemies == 0)
-	{
-		bPercentCoverForGridno = 100;
-	}
-	else
-	{
-		bPercentCoverForGridno = iTotalCoverPoints / bNumEnemies;
-		INT32 const iTemp = bPercentCoverForGridno - (iHighestValue / bNumEnemies) + iHighestValue;
-		bPercentCoverForGridno = std::clamp(100 - iTemp, 0, 100);
-	}
-	return bPercentCoverForGridno;
+	if (bNumEnemies == 0) return 100;
+
+	INT8 bPercentCoverForGridno = iTotalCoverPoints / bNumEnemies;
+	INT32 const iTemp = bPercentCoverForGridno - (iHighestValue / bNumEnemies) + iHighestValue;
+	return std::clamp(100 - iTemp, 0, 100);
 }
 
 

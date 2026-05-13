@@ -2367,14 +2367,61 @@ namespace
 	// (DisplayCover.cc:142-147): five colour bands at 20/40/60/80. We
 	// emit the same bands as English labels so the SR user gets the
 	// same granularity a sighted player perceives — no precise percent,
-	// because the cursor overlay never shows one either.
+	// because the cursor overlay never shows one either. The top bucket
+	// reads "clear" rather than "safe" because the single-tile output
+	// reserves "safe" for absence-of-threats messaging.
 	const char* coverBucket(INT8 cover)
 	{
 		if (cover <= 20) return "exposed";
 		if (cover <= 40) return "weak cover";
 		if (cover <= 60) return "partial cover";
 		if (cover <= 80) return "good cover";
-		return "safe";
+		return "clear";
+	}
+
+	// Find the eN tag (1-based) for an enemy in the canonical hostiles
+	// list, or 0 if not present. The list is ordered the same way
+	// `nearby` shows it, so eN here matches the user's other surfaces.
+	std::size_t findHostileTag(SOLDIERTYPE const* opp,
+	                           std::vector<ListedSoldier> const& hostiles)
+	{
+		for (std::size_t i = 0; i < hostiles.size(); ++i)
+		{
+			if (hostiles[i].soldier == opp) return i + 1;
+		}
+		return 0;
+	}
+
+	ST::string formatEnemyLabel(SOLDIERTYPE const* opp,
+	                            std::vector<ListedSoldier> const& hostiles)
+	{
+		std::size_t const tag = findHostileTag(opp, hostiles);
+		return tag != 0
+			? ST::format("{} (e{})", opp->name, tag)
+			: ST::string(opp->name);
+	}
+
+	// One line per stance: split the known-opponents list into the
+	// shooters who can hit you (threat > 0) and those who can't (gates
+	// fail at this tile/stance), and render both halves so the SR user
+	// can read off which stance change actually drops a specific threat.
+	void emitStanceCoverLine(const char* stanceTitle,
+	                          std::vector<CoverOpponent> const& list,
+	                          std::vector<ListedSoldier> const& hostiles)
+	{
+		ST::string exposed, covered;
+		for (CoverOpponent const& o : list)
+		{
+			ST::string& bucket = (o.threat > 0) ? exposed : covered;
+			if (!bucket.empty()) bucket += ", ";
+			bucket += formatEnemyLabel(o.opponent, hostiles);
+		}
+
+		ST::string body;
+		if (exposed.empty())      body = ST::format("covered from {}", covered);
+		else if (covered.empty()) body = ST::format("exposed to {}", exposed);
+		else                      body = ST::format("exposed to {}; covered from {}", exposed, covered);
+		Console_Println(ST::format("  {}: {}.", stanceTitle, body));
 	}
 }
 
@@ -2422,22 +2469,56 @@ void Cmd_Cover(const std::vector<std::string>& args)
 		label  = formatOffset(sel->sGridNo, gridno);
 	}
 
-	// Report all three stances at once. The overlay only shows the merc's
-	// current stance; toggling stance to compare requires repainting. One
-	// line lets the SR user compare without re-querying.
-	const INT8 stand  = CalcCoverForGridNoBasedOnTeamKnownEnemies(sel, gridno, ANIM_STAND);
-	const INT8 crouch = CalcCoverForGridNoBasedOnTeamKnownEnemies(sel, gridno, ANIM_CROUCH);
-	const INT8 prone  = CalcCoverForGridNoBasedOnTeamKnownEnemies(sel, gridno, ANIM_PRONE);
+	// Per-stance threat decomposition. The opponent universe is
+	// stance-independent (the gates up to LOS don't read bStance), so all
+	// three vectors hold the same enemies — only the per-enemy `threat`
+	// changes with stance. Reporting all three stances at once lets the
+	// SR user compare without re-querying, and the per-enemy split tells
+	// them *which* threats a stance change drops.
+	std::vector<CoverOpponent> stand, crouch, prone;
+	EvaluateCoverOpponentsAtGridNo(sel, gridno, ANIM_STAND,  stand);
+	EvaluateCoverOpponentsAtGridNo(sel, gridno, ANIM_CROUCH, crouch);
+	EvaluateCoverOpponentsAtGridNo(sel, gridno, ANIM_PRONE,  prone);
 
-	Console_Println(ST::format("Cover at {}: standing {}, crouched {}, prone {}.",
-	                           label,
-	                           coverBucket(stand),
-	                           coverBucket(crouch),
-	                           coverBucket(prone)));
+	if (stand.empty())
+	{
+		Console_Println(ST::format(
+			"Cover at {}: clear. No known enemy can see or reach this tile.",
+			label));
+		return;
+	}
+
+	std::vector<ListedSoldier> hostiles;
+	enumerateHostiles(*sel, hostiles);
+
+	Console_Println(ST::format("Cover at {} vs {} known {}:",
+	                           label, stand.size(),
+	                           stand.size() == 1 ? "enemy" : "enemies"));
+	emitStanceCoverLine("Standing", stand,  hostiles);
+	emitStanceCoverLine("Crouched", crouch, hostiles);
+	emitStanceCoverLine("Prone",    prone,  hostiles);
 }
 
 static void RunCoverScan(SOLDIERTYPE& sel, int radius)
 {
+	const INT8 stance = GetStance(sel);
+
+	// Short-circuit when no known enemies could threaten anywhere — the
+	// bucket distribution and "better moves" are meaningless when every
+	// tile is trivially clear. The opponent universe is stance- and
+	// tile-independent (the gates up to LOS test don't read either), so
+	// asking at the merc's own tile in the merc's own stance is enough.
+	std::vector<CoverOpponent> hereOpps;
+	EvaluateCoverOpponentsAtGridNo(&sel, sel.sGridNo, stance, hereOpps);
+	if (hereOpps.empty())
+	{
+		Console_Println(ST::format(
+			"Cover scan within {}: no known enemies — every reachable tile is trivially clear.",
+			radius));
+		return;
+	}
+	const std::size_t threatCount = hereOpps.size();
+
 	// Mirror DisplayCover.cc's overlay: paint cover only on tiles you can
 	// actually walk to. LocalReachableTest sets MAPELEMENT_REACHABLE on
 	// every tile within `radius` that has a foot path from the merc.
@@ -2448,12 +2529,10 @@ static void RunCoverScan(SOLDIERTYPE& sel, int radius)
 	const INT16 maxUp    = std::min<INT16>(radius,                  sel.sGridNo / MAXROW);
 	const INT16 maxDown  = std::min<INT16>(radius, MAXROW - 1     - sel.sGridNo / MAXROW);
 
-	const INT8 stance = GetStance(sel);
-
 	std::vector<ScanCandidate> cands;
 	cands.reserve(static_cast<size_t>((maxLeft + maxRight + 1) * (maxUp + maxDown + 1)));
 
-	int bucketCounts[5] = { 0, 0, 0, 0, 0 }; // exposed, weak, partial, good, safe
+	int bucketCounts[5] = { 0, 0, 0, 0, 0 }; // exposed, weak, partial, good, clear
 	int exposedByDir[NUM_WORLD_DIRECTIONS] = { 0 };
 
 	for (INT16 dy = -maxUp; dy <= maxDown; ++dy)
@@ -2499,8 +2578,9 @@ static void RunCoverScan(SOLDIERTYPE& sel, int radius)
 	}
 
 	Console_Println(ST::format(
-		"Cover scan within {} (stance {}): {} reachable — {} safe, {} good, {} partial, {} weak, {} exposed.",
-		radius, stanceWord(sel), total,
+		"Cover scan within {} vs {} known {} (stance {}): {} reachable — {} clear, {} good, {} partial, {} weak, {} exposed.",
+		radius, threatCount, threatCount == 1 ? "enemy" : "enemies",
+		stanceWord(sel), total,
 		bucketCounts[4], bucketCounts[3], bucketCounts[2], bucketCounts[1], bucketCounts[0]));
 
 	const INT8 hereCover = CalcCoverForGridNoBasedOnTeamKnownEnemies(&sel, sel.sGridNo, stance);
