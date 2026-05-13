@@ -13,24 +13,30 @@
 #include "JAScreens.h"
 #include "MapScreen.h"
 #include "Map_Screen_Interface.h"
+#include "Map_Screen_Helicopter.h"
 #include "Map_Screen_Interface_Bottom.h"
 #include "Map_Screen_Interface_Map.h"
 #include "MineModel.h"
 #include "SAM_Sites.h"
+#include "SamSiteModel.h"
 #include "Overhead.h"
 #include "Soldier_Control.h"
+#include "Tactical_Save.h"
 #include "Soldier_Profile.h"
 #include "Soldier_Profile_Type.h"
 #include "Squads.h"
 #include "ScreenIDs.h"
+#include "Quests.h"
 #include "Strategic_Mines.h"
 #include "Strategic_Movement.h"
 #include "Strategic_Pathing.h"
 #include "Strategic_Town_Loyalty.h"
 #include "StrategicMap.h"
+#include "StrategicMap_Secrets.h"
 #include "Text.h"
 #include "TownModel.h"
 #include "Types.h"
+#include "Vehicles.h"
 
 #include "Console.h"
 #include "Console_Address.h"
@@ -38,6 +44,7 @@
 #include "SGP.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstdlib>
@@ -45,6 +52,11 @@
 #include <string_theory/format>
 #include <string_theory/string>
 #include <vector>
+
+// pTempHelicopterPath lives in Map_Screen_Interface_Map.cc and isn't
+// hoisted to a header upstream — used here to detect when the player is
+// mid-plot vs. a locked-in route.
+extern PathSt* pTempHelicopterPath;
 
 namespace
 {
@@ -705,24 +717,27 @@ namespace
 	void cmdMapListSams()
 	{
 		if (!Console_RequireCampaign()) return;
-		// SAM sectors aren't listed centrally — iterate the surface grid.
-		Console_Println("SAM sites:");
+		// Match the sighted overlay: only list SAMs the player has
+		// discovered (ShowSAMSitesOnStrategicMap gates icons + labels on
+		// IsSecretFoundAt). We deliberately do NOT print a count of
+		// undiscovered sites — the total SAM count is itself a spoiler
+		// before Skyrider's "other SAM sites" monologue.
+		Console_Println("Known SAM sites:");
 		std::size_t shown = 0;
-		for (INT16 y = 1; y <= 16; ++y)
-		for (INT16 x = 1; x <= 16; ++x)
+		for (auto s : GCM->getSamSites())
 		{
-			SGPSector s(x, y);
-			if (!IsThisSectorASAMSector(s)) continue;
+			if (!IsSecretFoundAt(s->sectorId)) continue;
 			++shown;
-			const auto& el = StrategicMap[s.AsStrategicIndex()];
+			const SGPSector sec(s->sectorId);
+			const auto& el = StrategicMap[sec.AsStrategicIndex()];
 			Console_Println(ST::format(
 				"  {}: condition {}/100, {}, {}.",
-				GetSectorIDString(s, FALSE),
+				GetSectorIDString(sec, FALSE),
 				el.bSAMCondition,
 				el.fEnemyControlled ? "enemy" : "player",
-				IsThereAFunctionalSAMSiteInSector(s) ? "functional" : "non-functional"));
+				IsThereAFunctionalSAMSiteInSector(sec) ? "functional" : "non-functional"));
 		}
-		if (shown == 0) Console_Println("  (none).");
+		if (shown == 0) Console_Println("  (none discovered yet).");
 	}
 
 	void cmdMapListMilitia()
@@ -859,6 +874,371 @@ namespace
 		Console_Println(ST::format("{} mine:",
 			t ? t->name : ST::string("?")));
 		printMineLine(mineId);
+	}
+
+	// ----- map airspace ----------------------------------------------
+	// Mirrors the sighted "airspace" filter on the mapscreen border (the
+	// MAP_BORDER_AIRSPACE_BTN toggle). The filter recolours every sector
+	// by fEnemyAirControlled and labels discovered SAM sites; here we
+	// expose the same data textually, plus the helicopter cost split.
+
+	// Controlling SAM identity is gated on player discovery — sighted
+	// players see undiscovered SAMs neither named on the map nor outlined
+	// in the airspace overlay. The per-sector airspace TINT is not gated
+	// (it's just the engine's pre-computed friendly/enemy bit and the
+	// sighted overlay paints it unconditionally), so we report it.
+	INT8 visibleControllingSam(UINT8 sectorId)
+	{
+		const INT8 sam = GCM->getControllingSamSite(sectorId);
+		if (sam < 0) return -1;
+		const auto& list = GCM->getSamSites();
+		if (static_cast<std::size_t>(sam) >= list.size()) return -1;
+		return IsSecretFoundAt(list[sam]->sectorId) ? sam : -1;
+	}
+
+	// Sector-tint totals only — these are public (the engine paints the
+	// friendly/enemy bit unconditionally, regardless of whether any SAM
+	// has been discovered). Per-SAM coverage counts are intentionally
+	// computed only for *discovered* SAMs; otherwise we'd leak how big
+	// each undiscovered zone is, which the GUI never shows.
+	struct AirspaceTotals
+	{
+		std::size_t friendlyVisited = 0, friendlyUnvisited = 0;
+		std::size_t enemyVisited = 0,    enemyUnvisited = 0;
+		std::array<std::size_t, NUMBER_OF_SAMS> perKnownSam{};
+	};
+
+	AirspaceTotals collectAirspace()
+	{
+		AirspaceTotals t{};
+		for (INT16 y = 1; y <= 16; ++y)
+		for (INT16 x = 1; x <= 16; ++x)
+		{
+			const SGPSector s(x, y);
+			const auto& el = StrategicMap[s.AsStrategicIndex()];
+			const bool visited = GetSectorFlagStatus(s, SF_ALREADY_VISITED);
+			if (el.fEnemyAirControlled)
+				visited ? ++t.enemyVisited : ++t.enemyUnvisited;
+			else
+				visited ? ++t.friendlyVisited : ++t.friendlyUnvisited;
+			const INT8 sam = visibleControllingSam(s.AsByte());
+			if (sam >= 0 && static_cast<std::size_t>(sam) < t.perKnownSam.size())
+				++t.perKnownSam[sam];
+		}
+		return t;
+	}
+
+	// Refuel-site lines must respect quest discovery: Drassen airport is
+	// public the moment Skyrider's set up (his intro narrates it), but
+	// Estoni only exists for the player after FACT_ESTONI_REFUELLING_POSSIBLE
+	// is set (Interface_Dialogue.cc:3818 — the Estoni-quest dialog). The
+	// engine itself respects this in UpdateRefuelSiteAvailability.
+	void printRefuelSitesIfKnown()
+	{
+		// No Skyrider, no refuel-site disclosures — the player doesn't
+		// know there are *any* refuel sites until they meet him.
+		if (!fSkyRiderSetUp) return;
+		const bool estoniKnown = CheckFact(FACT_ESTONI_REFUELLING_POSSIBLE, 0);
+		if (estoniKnown)
+		{
+			Console_Println(ST::format(
+				"Refuel sites: Drassen {}, Estoni {}.",
+				fRefuelingSiteAvailable[DRASSEN_REFUELING_SITE] ? "available" : "unavailable",
+				fRefuelingSiteAvailable[ESTONI_REFUELING_SITE]  ? "available" : "unavailable"));
+		}
+		else
+		{
+			Console_Println(ST::format(
+				"Refuel site: Drassen {}.",
+				fRefuelingSiteAvailable[DRASSEN_REFUELING_SITE] ? "available" : "unavailable"));
+		}
+	}
+
+	void cmdMapAirspaceSummary()
+	{
+		if (!Console_RequireCampaign()) return;
+		const auto t = collectAirspace();
+
+		// Per-sector tint counts are public — the airspace overlay paints
+		// them unconditionally for every sector.
+		Console_Println(ST::format(
+			"Airspace: {} friendly sectors ({} visited), {} enemy sectors ({} visited).",
+			t.friendlyVisited + t.friendlyUnvisited, t.friendlyVisited,
+			t.enemyVisited    + t.enemyUnvisited,    t.enemyVisited));
+
+		// SAM ownership aggregates only across *discovered* SAMs, and we
+		// avoid stating any total — the total count and the breakdown of
+		// undiscovered sites are both spoilers before Skyrider's
+		// "other SAM sites" monologue (Map_Screen_Helicopter.cc:828-830).
+		std::size_t knownPlayer = 0, knownEnemy = 0, knownFunctional = 0, knownTotal = 0;
+		for (auto s : GCM->getSamSites())
+		{
+			if (!IsSecretFoundAt(s->sectorId)) continue;
+			++knownTotal;
+			const SGPSector ss(s->sectorId);
+			const auto& el = StrategicMap[ss.AsStrategicIndex()];
+			(el.fEnemyControlled ? knownEnemy : knownPlayer) += 1;
+			if (IsThereAFunctionalSAMSiteInSector(ss)) ++knownFunctional;
+		}
+		if (knownTotal == 0)
+		{
+			Console_Println("No SAM sites discovered yet.");
+		}
+		else
+		{
+			Console_Println(ST::format(
+				"Known SAM sites: {} (player-held: {}, enemy-held: {}, functional: {}).",
+				knownTotal, knownPlayer, knownEnemy, knownFunctional));
+		}
+
+		// Skyrider's per-sector fare is part of his hiring spiel; before
+		// he's introduced the player doesn't know these specific numbers.
+		if (fSkyRiderSetUp)
+		{
+			Console_Println(ST::format(
+				"Skyrider cost per sector: {} friendly, {} enemy.",
+				SPrintMoney(COST_AIRSPACE_SAFE),
+				SPrintMoney(COST_AIRSPACE_UNSAFE)));
+		}
+
+		printRefuelSitesIfKnown();
+		Console_Println(
+			"Use 'map airspace <sector>' for one sector, 'map airspace list' for SAM zones.");
+	}
+
+	void cmdMapAirspaceSector(const std::vector<std::string>& args)
+	{
+		if (!Console_RequireCampaign()) return;
+		SGPSector sec;
+		ST::string err;
+		// args[0]="map", args[1]="airspace", args[2..]=sector tokens.
+		if (!resolveSectorArg(joinFrom(args, 2), sec, err))
+		{
+			Console_Println(err);
+			return;
+		}
+		const auto& el = StrategicMap[sec.AsStrategicIndex()];
+
+		// The per-sector tint is unconditional in the sighted overlay, so
+		// it's always safe to surface.
+		Console_Println(ST::format(
+			"{}: {} airspace.",
+			GetSectorIDString(sec, FALSE),
+			el.fEnemyAirControlled ? "enemy" : "friendly"));
+
+		// Controlling SAM line is only emitted when the SAM is discovered.
+		// We intentionally do NOT print "not yet discovered" or "out of
+		// range" — both would leak coverage-table information the sighted
+		// overlay doesn't expose (the player only sees the sector tint
+		// and any *discovered* SAM icons, not which-SAM-covers-which).
+		const INT8 sam = visibleControllingSam(sec.AsByte());
+		if (sam >= 0)
+		{
+			const auto& list = GCM->getSamSites();
+			const SGPSector samSec(list[sam]->sectorId);
+			const auto& samEl = StrategicMap[samSec.AsStrategicIndex()];
+			Console_Println(ST::format(
+				"  Controlling SAM: {} ({}-held, condition {}/100, {}).",
+				GetSectorIDString(samSec, FALSE),
+				samEl.fEnemyControlled ? "enemy" : "player",
+				samEl.bSAMCondition,
+				IsThereAFunctionalSAMSiteInSector(samSec) ? "functional" : "non-functional"));
+		}
+
+		if (fSkyRiderSetUp)
+		{
+			Console_Println(ST::format("  Skyrider flight cost: {} for this sector.",
+				SPrintMoney(el.fEnemyAirControlled ? COST_AIRSPACE_UNSAFE : COST_AIRSPACE_SAFE)));
+		}
+	}
+
+	void cmdMapAirspaceList()
+	{
+		if (!Console_RequireCampaign()) return;
+		const auto t = collectAirspace();
+		const auto& sams = GCM->getSamSites();
+		Console_Println("Known SAM coverage zones:");
+		std::size_t shown = 0;
+		for (std::size_t i = 0; i < sams.size(); ++i)
+		{
+			if (!IsSecretFoundAt(sams[i]->sectorId)) continue;
+			++shown;
+			const SGPSector samSec(sams[i]->sectorId);
+			const auto& el = StrategicMap[samSec.AsStrategicIndex()];
+			const std::size_t covered = i < t.perKnownSam.size() ? t.perKnownSam[i] : 0;
+			Console_Println(ST::format(
+				"  {} ({}-held, condition {}/100, {}): controls {} sector{}.",
+				GetSectorIDString(samSec, FALSE),
+				el.fEnemyControlled ? "enemy" : "player",
+				el.bSAMCondition,
+				IsThereAFunctionalSAMSiteInSector(samSec) ? "functional" : "non-functional",
+				covered, covered == 1 ? "" : "s"));
+		}
+		if (shown == 0) Console_Println("  (none discovered yet).");
+		// Deliberately no "N undiscovered zones" or "N sectors out of SAM
+		// range" tally — both would leak the SAM count / coverage table
+		// the GUI never surfaces.
+	}
+
+	void cmdMapAirspace(const std::vector<std::string>& args)
+	{
+		// `map airspace`           — summary
+		// `map airspace list`      — per-SAM coverage zones
+		// `map airspace <sector>`  — one sector's airspace status
+		if (args.size() < 3) { cmdMapAirspaceSummary(); return; }
+		if (lower(args[2]) == "list") { cmdMapAirspaceList(); return; }
+		cmdMapAirspaceSector(args);
+	}
+
+	// ----- map heli ---------------------------------------------------
+	// Read-only Skyrider status. The sighted mapscreen surfaces this
+	// through (a) the helicopter sprite on the strategic map (only when
+	// the airspace filter is on), (b) the bullseye for the chopper's
+	// destination, (c) Skyrider's character row in the team panel for
+	// fuel-debt etc. We collapse all of it into one console readout.
+
+	const char* heliStateWord()
+	{
+		// Order matters: destroyed beats everything; returning-to-base is
+		// a transient airborne state we want named explicitly; hovering
+		// is airborne-but-paused so it goes before plain airborne.
+		if (fHelicopterDestroyed)     return "destroyed";
+		if (fHeliReturnStraightToBase) return "returning to base";
+		if (fHoveringHelicopter)      return "hovering";
+		if (fHelicopterIsAirBorne)    return "airborne";
+		return "grounded";
+	}
+
+	void cmdMapHeli()
+	{
+		if (!Console_RequireCampaign()) return;
+
+		if (fHelicopterDestroyed)
+		{
+			Console_Println("Skyrider's helicopter has been destroyed.");
+			return;
+		}
+		if (!fSkyRiderSetUp || iHelicopterVehicleId == -1)
+		{
+			// Skyrider is a quest NPC who roams between four candidate
+			// sectors before he's introduced. Don't name them here — the
+			// engine already gates that discovery, and surfacing it
+			// would amount to a spoiler.
+			Console_Println("Skyrider not yet hired.");
+			return;
+		}
+
+		const VEHICLETYPE& v = GetHelicopter();
+		const auto& el = StrategicMap[v.sSector.AsStrategicIndex()];
+		Console_Println(ST::format(
+			"Skyrider: {}, in {} ({} airspace).",
+			heliStateWord(),
+			GetSectorIDString(v.sSector, FALSE),
+			el.fEnemyAirControlled ? "enemy" : "friendly"));
+
+		// Pilot availability gates flight separately from physical state
+		// (e.g. owed money / Drassen loyalty). Surface that distinction.
+		const bool pilotOk = IsHelicopterPilotAvailable();
+		const bool flyable = CanHelicopterFly();
+		if (!pilotOk)
+		{
+			Console_Println(
+				"  Pilot unavailable (unpaid balance or Drassen loyalty too low).");
+		}
+		else if (!flyable && !fHeliReturnStraightToBase)
+		{
+			Console_Println("  Grounded (enemies in current sector).");
+		}
+
+		// Passengers — chopper holds up to MAX_PASSENGERS_IN_VEHICLE.
+		std::vector<ST::string> riders;
+		CFOR_EACH_PASSENGER(v, p) riders.push_back((*p)->name);
+		if (riders.empty())
+		{
+			Console_Println("  Passengers: none.");
+		}
+		else
+		{
+			ST::string names;
+			for (const auto& n : riders)
+			{
+				if (!names.empty()) names += ", ";
+				names += n;
+			}
+			Console_Println(ST::format("  Passengers ({}): {}.",
+				riders.size(), names));
+		}
+
+		// Planned destination + per-sector route. If pTempHelicopterPath
+		// is non-null we're mid-plot from the player; otherwise pMercPath
+		// is the locked-in route.
+		const PathSt* head = pTempHelicopterPath ? pTempHelicopterPath : v.pMercPath;
+		std::size_t pathLen = 0;
+		const PathSt* tail = nullptr;
+		for (const PathSt* n = head; n; n = n->pNext)
+		{
+			++pathLen;
+			tail = n;
+		}
+		if (tail && pathLen > 1)
+		{
+			const SGPSector dest = SGPSector::FromStrategicIndex(tail->uiSectorId);
+			const INT16 safe   = GetNumSafeSectorsInPath();
+			const INT16 unsafe = GetNumUnSafeSectorsInPath();
+			const INT32 cost =
+				static_cast<INT32>(safe)   * COST_AIRSPACE_SAFE +
+				static_cast<INT32>(unsafe) * COST_AIRSPACE_UNSAFE;
+			Console_Println(ST::format(
+				"  Destination: {}. Route: {} safe + {} hostile sector{} ({} total).",
+				GetSectorIDString(dest, FALSE),
+				safe, unsafe, (safe + unsafe) == 1 ? "" : "s",
+				SPrintMoney(cost)));
+		}
+		else
+		{
+			Console_Println("  No destination plotted.");
+		}
+
+		// Outstanding fare. The engine charges per-sector as the chopper
+		// moves and reconciles at end-of-day or when the player has cash;
+		// the running total lives in iTotalAccumulatedCostByPlayer.
+		if (iTotalAccumulatedCostByPlayer > 0)
+		{
+			Console_Println(ST::format(
+				"  Accumulated fare owing: {}.",
+				SPrintMoney(iTotalAccumulatedCostByPlayer)));
+		}
+
+		// Damage so far this flight — three hits and the chopper falls.
+		if (gubHelicopterHitsTaken > 0)
+		{
+			Console_Println(ST::format(
+				"  SAM hits taken: {} of 3.",
+				gubHelicopterHitsTaken));
+		}
+
+		// Refuel availability mirrors the airspace summary but we repeat
+		// it here so a single `map heli` invocation is self-contained.
+		// Estoni only shows up after FACT_ESTONI_REFUELLING_POSSIBLE — the
+		// engine itself respects that gate in UpdateRefuelSiteAvailability,
+		// and naming the second site before the quest unlocks it would
+		// spoil discovery. Drassen is fine to name unconditionally here
+		// because reaching this branch implies Skyrider's been hired
+		// (his intro narrates the Drassen airport refuel).
+		const bool estoniKnown = CheckFact(FACT_ESTONI_REFUELLING_POSSIBLE, 0);
+		if (estoniKnown)
+		{
+			Console_Println(ST::format(
+				"  Refuel sites: Drassen {}, Estoni {}.",
+				fRefuelingSiteAvailable[DRASSEN_REFUELING_SITE] ? "available" : "unavailable",
+				fRefuelingSiteAvailable[ESTONI_REFUELING_SITE]  ? "available" : "unavailable"));
+		}
+		else
+		{
+			Console_Println(ST::format(
+				"  Refuel site: Drassen {}.",
+				fRefuelingSiteAvailable[DRASSEN_REFUELING_SITE] ? "available" : "unavailable"));
+		}
 	}
 
 	// ----- map dispatch -----------------------------------------------
@@ -1374,13 +1754,15 @@ void Cmd_Map(const std::vector<std::string>& args)
 	Console_EnsureMapscreen();
 	if (args.size() < 2) { cmdMapView(); return; }
 	const std::string sub = lower(args[1]);
-	if (sub == "sector") { cmdMapSector(args); return; }
-	if (sub == "list")   { cmdMapList(args);   return; }
-	if (sub == "town")   { cmdMapTown(args);   return; }
-	if (sub == "mine")   { cmdMapMine(args);   return; }
-	if (sub == "level")  { cmdMapLevel(args);  return; }
-	if (sub == "move")   { cmdMapMove(args);   return; }
-	if (sub == "cancel") { cmdMapCancel(args); return; }
+	if (sub == "sector")   { cmdMapSector(args);   return; }
+	if (sub == "list")     { cmdMapList(args);     return; }
+	if (sub == "town")     { cmdMapTown(args);     return; }
+	if (sub == "mine")     { cmdMapMine(args);     return; }
+	if (sub == "airspace") { cmdMapAirspace(args); return; }
+	if (sub == "heli")     { cmdMapHeli();         return; }
+	if (sub == "level")    { cmdMapLevel(args);    return; }
+	if (sub == "move")     { cmdMapMove(args);     return; }
+	if (sub == "cancel")   { cmdMapCancel(args);   return; }
 
 	// Shorthand: `map b9`, `map drassen`, `map here` — treat the arg as
 	// a sector id and dispatch to `map sector`. Lets the user skip the
@@ -1400,6 +1782,7 @@ void Cmd_Map(const std::vector<std::string>& args)
 	Console_Println(ST::format(
 		"unknown subcommand: map {} (try 'map', 'map sector <id>', "
 		"'map list <towns|mines|sams|militia|enemies>', 'map town <name>', 'map mine <town>', "
+		"'map airspace [<sector>|list]', 'map heli', "
 		"'map level <0..3>', 'map move <sector> [from <name>] [keep-path]', 'map cancel [<name>]')",
 		args[1]));
 }

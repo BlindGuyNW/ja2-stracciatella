@@ -88,7 +88,7 @@ namespace
 		{ "bobbyr",    &Cmd_Bobbyr,     "bobbyr [list|show|add|remove|cart|clear|ship|speed|status|checkout|cancel|page|shipments|shipment]" },
 		{ "team",      &Cmd_Team,       "team | team list [filter] [sort] | team merc <name|tN> | team sleep <name|tN> <on|off>" },
 		{ "assign",    &Cmd_Assign,     "assign | assign list | assign <name|tN> | assign <name|tN> doctor|patient|repair [robot|vehicle <type>]|vehicle <type>|train self|town|teach|learn [<stat>]|squad <N>" },
-		{ "map",       &Cmd_Map,        "map | map sector <id> | map list <towns|mines|sams|militia|enemies> | map town <name> | map mine <town> | map level <0..3> | map move <sector> [from <name>] [keep-path] | map cancel [<name>]" },
+		{ "map",       &Cmd_Map,        "map | map sector <id> | map list <towns|mines|sams|militia|enemies> | map town <name> | map mine <town> | map airspace [<sector>|list] | map heli | map level <0..3> | map move <sector> [from <name>] [keep-path] | map cancel [<name>]" },
 		{ "laptop",    &Cmd_Laptop,     "laptop — open the laptop screen"                        },
 		{ "tactical",  &Cmd_Tactical,   "tactical — switch to the tactical screen"               },
 		{ "quit",      &Cmd_Quit,       "quit — exit the application"                            },
