@@ -72,7 +72,7 @@ namespace
 		{ "plant",      &Cmd_Plant,      "plant <slot> [target] — place an armed bomb at the merc's tile or adjacent" },
 		{ "detonate",   &Cmd_Detonate,   "detonate <freq> — trigger all armed remote bombs on a frequency" },
 		{ "pickup",     &Cmd_Pickup,     "pickup [target] — walk to a tile and grab visible items" },
-		{ "stash",      &Cmd_Stash,      "stash [<sector>] [hidden] — visible items in a sector's loot pile (defaults to current); 'hidden' shows items the player hasn't spotted yet" },
+		{ "stash",      &Cmd_Stash,      "stash [<sector>] [hidden] — items in a sector's loot pile, one row per pile with @ offset; 'hidden' shows items the player hasn't spotted yet; 'stash take <pile> [merc]' grabs everything at an addressed tile (use 'nearby items' for the i<N> tags)" },
 		{ "bandage",    &Cmd_Bandage,    "bandage [name] — apply a first aid kit (defaults to self)" },
 		{ "swap-hands", &Cmd_SwapHands,  "swap-hands — swap main and off hand"                    },
 		{ "swap",       &Cmd_Swap,       "swap <slot> <slot> — move an item between two slots"    },
