@@ -190,4 +190,12 @@ SOLDIERTYPE* findTeammateByName(const std::string& needle, ST::string& errorOut)
  *  [[nodiscard]]. */
 SOLDIERTYPE* requireSelectedMerc(const char* msg = "No merc selected.");
 
+/** Parse a console sector argument into an SGPSector. Three forms:
+ *    "A9"        grid notation, optional "-1".."-3" underground suffix.
+ *    "drassen"   town name (case-insensitive); resolves to the town's
+ *                 base sector and inherits any z suffix from `wantRaw`.
+ *    "here"      the mapscreen-selected sector (sSelMap).
+ *  On failure writes a one-line user-facing reason into `err`. */
+bool resolveSectorArg(const std::string& wantRaw, SGPSector& out, ST::string& err);
+
 #endif // GAME_CONSOLE_ADDRESS_H_

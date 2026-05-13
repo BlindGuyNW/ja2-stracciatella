@@ -19,6 +19,7 @@ set(JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Query.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Rows.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Save.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Console_Stash.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Strategic.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Text.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Console_Visibility.cc

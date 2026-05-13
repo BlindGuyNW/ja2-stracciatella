@@ -13,6 +13,7 @@
 #include "GameSettings.h"
 #include "Quests.h"
 #include "Soldier_Profile.h"
+#include "Tactical_Save.h"
 #include "ContentManager.h"
 #include "GameInstance.h"
 #include "MagazineModel.h"
@@ -440,4 +441,50 @@ void RefreshWorldItemsIntoItemPools(const std::vector<WORLDITEM>& items)
 		OBJECTTYPE o = wi.o; // XXX AddItemToPool() may alter the object
 		AddItemToPool(wi.sGridNo, &o, static_cast<Visibility>(wi.bVisible), wi.ubLevel, wi.usFlags, wi.bRenderZHeightAboveLevel);
 	}
+}
+
+
+BOOLEAN IsMapScreenWorldItemVisibleInMapInventory(const WORLDITEM& wi)
+{
+	if (wi.fExists             &&
+			wi.bVisible == VISIBLE &&
+			wi.o.usItem != SWITCH &&
+			wi.o.usItem != ACTION_ITEM &&
+			wi.o.bTrap <= 0 )
+	{
+		return( TRUE );
+	}
+
+	return( FALSE );
+}
+
+
+SectorStash LoadSectorStash(const SGPSector& sector)
+{
+	std::vector<WORLDITEM> temp;
+	const std::vector<WORLDITEM>* items;
+	if (sector == gWorldSector)
+	{
+		items = &gWorldItems;
+	}
+	else
+	{
+		temp = LoadWorldItemsFromTempItemFile(sector);
+		items = &temp;
+	}
+
+	SectorStash stash;
+	for (const WORLDITEM& wi : *items)
+	{
+		if (!wi.fExists) continue;
+		if (IsMapScreenWorldItemVisibleInMapInventory(wi))
+		{
+			stash.seen.push_back(wi);
+		}
+		else
+		{
+			stash.unseen.push_back(wi);
+		}
+	}
+	return stash;
 }

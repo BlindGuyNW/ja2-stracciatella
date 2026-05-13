@@ -444,69 +444,8 @@ namespace
 	//   `map` — strategic geography
 	// ============================================================
 
-	// ----- sector-id parser --------------------------------------------
-	// Three forms: grid notation (A9, optional -1/-2/-3 underground
-	// suffix), town name (Drassen → primary sector), or "here" (sSelMap).
-	bool resolveSectorArg(const std::string& wantRaw, SGPSector& out, ST::string& err)
-	{
-		std::string want = lower(wantRaw);
-		if (want.empty()) { err = ST::string("missing sector"); return false; }
-
-		if (want == "here") { out = sSelMap; return true; }
-
-		// Underground suffix -1 / -2 / -3 — split off before the rest.
-		INT8 z = 0;
-		const std::size_t dash = want.rfind('-');
-		if (dash != std::string::npos && dash > 0)
-		{
-			long zv;
-			if (parseInt(want.substr(dash + 1), zv) && zv >= 1 && zv <= 3)
-			{
-				z = static_cast<INT8>(zv);
-				want = want.substr(0, dash);
-			}
-		}
-
-		// Grid notation: leading letter A..P followed by digits.
-		if (want.size() >= 2 && want[0] >= 'a' && want[0] <= 'p')
-		{
-			bool allDigits = true;
-			for (std::size_t i = 1; i < want.size(); ++i)
-				if (!std::isdigit(static_cast<unsigned char>(want[i])))
-				{
-					allDigits = false; break;
-				}
-			if (allDigits)
-			{
-				// FromShortString takes "A9" — reuse it but add z afterwards.
-				out = SGPSector::FromShortString(ST::string(want.c_str()), z);
-				if (!out.IsValid())
-				{
-					err = ST::format("sector {} out of range (A1..P16, optional -1..-3)",
-						wantRaw);
-					return false;
-				}
-				return true;
-			}
-		}
-
-		// Town name lookup.
-		for (auto const& kv : GCM->getTowns())
-		{
-			if (!kv.second) continue;
-			if (lower(kv.second->name.to_std_string()) == want ||
-			    lower(kv.second->internalName.to_std_string()) == want)
-			{
-				out = kv.second->getBaseSector();
-				out.z = z;
-				return true;
-			}
-		}
-
-		err = ST::format("not a sector: {} (try grid e.g. C9, town name, or 'here')",
-			wantRaw);
-		return false;
-	}
+	// Sector-id parsing (grid notation / town name / "here") lives in
+	// Console_Address.cc as resolveSectorArg, shared with the stash verb.
 
 	// ----- map (current view) -----------------------------------------
 

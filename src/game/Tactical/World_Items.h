@@ -80,4 +80,20 @@ extern INT32 FindWorldItemForBombInGridNo( INT16 sGridNo, INT8 bLevel);
 
 void RefreshWorldItemsIntoItemPools(const std::vector<WORLDITEM>& items);
 
+// True for items the player has actually seen (bVisible == VISIBLE) and that
+// represent real loot — switches, action items, and traps are excluded.
+BOOLEAN IsMapScreenWorldItemVisibleInMapInventory(const WORLDITEM& wi);
+
+// A sector's items partitioned by player visibility. `seen` matches what the
+// mapscreen inventory panel shows; `unseen` is the rest of fExists items.
+struct SectorStash
+{
+	std::vector<WORLDITEM> seen;
+	std::vector<WORLDITEM> unseen;
+};
+
+// Load any sector's items (current sector reads gWorldItems live; other
+// sectors read the temp file) and split them via the predicate above.
+SectorStash LoadSectorStash(const SGPSector& sector);
+
 #endif

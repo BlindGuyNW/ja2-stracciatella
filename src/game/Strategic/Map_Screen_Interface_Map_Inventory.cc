@@ -645,33 +645,9 @@ static void SortSectorInventory(WORLDITEM* pInventory, size_t sizeOfArray);
 
 static void BuildStashForSelectedSector(const SGPSector& sector)
 {
-	std::vector<WORLDITEM> temp;
-	std::vector<WORLDITEM>* items = nullptr;
-	if (sector == gWorldSector)
-	{
-		items = &gWorldItems;
-	}
-	else
-	{
-		temp = LoadWorldItemsFromTempItemFile(sector);
-		items = &temp;
-	}
-
-	pInventoryPoolList.clear();
-	pUnSeenItems.clear();
-
-	for (const WORLDITEM& wi : *items)
-	{
-		if (!wi.fExists) continue;
-		if (IsMapScreenWorldItemVisibleInMapInventory(wi))
-		{
-			pInventoryPoolList.push_back(wi);
-		}
-		else
-		{
-			pUnSeenItems.push_back(wi);
-		}
-	}
+	SectorStash stash = LoadSectorStash(sector);
+	pInventoryPoolList = std::move(stash.seen);
+	pUnSeenItems       = std::move(stash.unseen);
 
 	size_t visible_slots = pInventoryPoolList.size();
 	size_t empty_slots = MAP_INVENTORY_POOL_SLOT_COUNT - visible_slots % MAP_INVENTORY_POOL_SLOT_COUNT;
@@ -1265,22 +1241,6 @@ static void HandleMapSectorInventory(void)
 {
 	// handle mouse in compatable item map sectors inventory
 	HandleMouseInCompatableItemForMapSectorInventory( iCurrentlyHighLightedItem );
-}
-
-
-//CJC look here to add/remove checks for the sector inventory
-BOOLEAN IsMapScreenWorldItemVisibleInMapInventory(const WORLDITEM& wi)
-{
-	if (wi.fExists             &&
-			wi.bVisible == VISIBLE &&
-			wi.o.usItem != SWITCH &&
-			wi.o.usItem != ACTION_ITEM &&
-			wi.o.bTrap <= 0 )
-	{
-		return( TRUE );
-	}
-
-	return( FALSE );
 }
 
 
