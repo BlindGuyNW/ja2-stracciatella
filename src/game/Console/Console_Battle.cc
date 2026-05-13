@@ -2,7 +2,6 @@
 
 #include "Console.h"
 
-#include "Accessibility.h"
 #include "Map_Screen_Interface_Map.h"
 #include "Overhead.h"
 #include "PreBattle_Interface.h"
@@ -279,9 +278,4 @@ void Console_AnnouncePreBattle()
 	if (!gfPreBattleInterfaceActive) return;
 
 	printSummary();
-
-	// Speech: terse cue identifying the dialog category; detail is on
-	// demand via `battle`. Mirrors the modal-dialog convention of
-	// announcing the category along with body text.
-	AX_Say(ST::format("{} Type 'battle' for details.", headerLine()), true);
 }

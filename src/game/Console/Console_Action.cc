@@ -325,9 +325,20 @@ void Cmd_Move(const std::vector<std::string>& args)
 		}
 	}
 
-	EVENT_InternalGetNewSoldierPath(sel, static_cast<UINT16>(destGridNo),
-	                                sel->usUIMovementMode, TRUE,
-	                                sel->fNoAPToFinishMove);
+	// Mirror Handle_UI.cc:1676 — the engine click handler checks the bool
+	// return and surfaces NO_PATH_FOR_MERC on failure. The openable
+	// pre-check above only validates the adj tile in isolation; the full
+	// path from the merc can still fail (intervening furniture, blocked
+	// corridor, locked geometry). Without this guard we'd print "Moving."
+	// and, on the interact branch, leak a StartInteractiveObject pending
+	// against a merc who never moves.
+	if (!EVENT_InternalGetNewSoldierPath(sel, static_cast<UINT16>(destGridNo),
+	                                     sel->usUIMovementMode, TRUE,
+	                                     sel->fNoAPToFinishMove))
+	{
+		Console_Println(ST::format("No path for {}.", sel->name));
+		return;
+	}
 
 	if (willInteract)
 	{
@@ -1474,9 +1485,9 @@ namespace
 
 		// Converse routes through the engine's quote system, which will
 		// emit the NPC's response via TacticalCharacterDialogue → ScreenMsg
-		// (we hooked MSG_DIALOG into AX_Say so subtitles narrate). If
-		// the NPC has no record matching this approach, the engine
-		// silently drops it; surface a hint so the user isn't left
+		// (Message.cc hooks MSG_DIALOG into Console_Println so subtitles
+		// print). If the NPC has no record matching this approach, the
+		// engine silently drops it; surface a hint so the user isn't left
 		// guessing.
 		Converse(gTalkPanel.ubCharNum, gubSrcSoldierProfile, appr);
 		Console_Println(ST::format("Approach: {}.", approachLabel(appr)));
@@ -1570,7 +1581,7 @@ void Cmd_Talk(const std::vector<std::string>& args)
 	// (Handle_UI.cc:4708). The click UI fires a randomized
 	// QUOTE_NEGATIVE_COMPANY / QUOTE_PASSING_DISLIKE / QUOTE_SOCIAL_TRAIT
 	// based on attitude, no conversation popup. The chatter line lands
-	// in ScreenMsg → AX_Say so the SR user hears it.
+	// in ScreenMsg → Console_Println so the SR user sees it.
 	if (target->bTeam == OUR_TEAM && !AM_AN_EPC(target))
 	{
 		if (target->ubProfile == DIMITRI)
@@ -1603,7 +1614,7 @@ void Cmd_Talk(const std::vector<std::string>& args)
 
 	// LOS check before initiating — the click UI emits a localized
 	// "no LOS" ScreenMsg here (Handle_UI.cc:4680). We rely on the same
-	// ScreenMsg path to surface that message via AX_Say if the engine
+	// ScreenMsg path to surface that message via Console_Println if the engine
 	// emits it, but pre-check ourselves so we can also fail cleanly
 	// with a console-side message.
 	const INT16 distVisible = DistanceVisible(

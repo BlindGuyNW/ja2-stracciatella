@@ -1,4 +1,3 @@
-#include "Accessibility.h"
 #include "Handle_Items.h"
 #include "Real_Time_Input.h"
 #include "Soldier_Find.h"
@@ -60,7 +59,6 @@
 #include "GameSettings.h"
 #include "Vehicles.h"
 #include "SaveLoadScreen.h"
-#include "Accessibility.h"
 #include "Meanwhile.h"
 #include "Text.h"
 #include "Inventory_Choosing.h"
@@ -87,11 +85,6 @@
 
 #include <algorithm>
 #include <functional>
-
-// Forward declarations for screen-reader helpers defined further down.
-static char const* AXDirName(UINT8 dir);
-static char const* AXTerrainName(TerrainTypeDefines t);
-static void AXStepVirtualCursor(INT8 step_dir, bool recenter);
 
 static BOOLEAN gfFirstCycleMovementStarted = FALSE;
 
@@ -1467,27 +1460,6 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 				if (sel->bOppCnt > 0)
 				{
 					CycleVisibleEnemies(sel);
-					UINT8 const id = sel->ubLastEnemyCycledID;
-					if (id != 0)
-					{
-						SOLDIERTYPE const& foe = GetMan(id);
-						// Force a synchronous camera recenter — CycleVisibleEnemies uses
-						// SlideTo, which is async when the target is off-screen and a no-op
-						// when on-screen. Either way, GetGridNoScreenPos below would compute
-						// against a stale camera and the warp would land off-tile.
-						InternalLocateGridNo(foe.sGridNo, TRUE);
-						INT16 sx = 0;
-						INT16 sy = 0;
-						GetGridNoScreenPos(foe.sGridNo, foe.bLevel, &sx, &sy);
-						SimulateMouseMovement(sx, sy);
-
-						UINT8 const dir = static_cast<UINT8>(
-							GetDirectionToGridNoFromGridNo(sel->sGridNo, foe.sGridNo));
-						INT16 const dist = PythSpacesAway(sel->sGridNo, foe.sGridNo);
-						AX_Say(ST::format(
-							"{}, {} tiles {}, life {}",
-							foe.name, dist, AXDirName(dir), foe.bLife));
-					}
 				}
 				else
 				{
@@ -2106,99 +2078,6 @@ static void HandleModAltCheats(UINT32 const key, UIEventKind * const new_event)
 }
 
 
-static char const* const AX_DIR_NAMES[NUM_WORLD_DIRECTIONS] = {
-	"north", "northeast", "east", "southeast",
-	"south", "southwest", "west", "northwest"
-};
-
-static char const* AXDirName(UINT8 const dir)
-{
-	return AX_DIR_NAMES[dir < NUM_WORLD_DIRECTIONS ? dir : 0];
-}
-
-static char const* AXTerrainName(TerrainTypeDefines const t)
-{
-	switch (t)
-	{
-		case FLAT_GROUND:  return "ground";
-		case FLAT_FLOOR:   return "floor";
-		case PAVED_ROAD:   return "paved road";
-		case DIRT_ROAD:    return "dirt road";
-		case LOW_GRASS:    return "low grass";
-		case HIGH_GRASS:   return "high grass";
-		case TRAIN_TRACKS: return "tracks";
-		case LOW_WATER:    return "shallow water";
-		case MED_WATER:    return "water";
-		case DEEP_WATER:   return "deep water";
-		default:           return "ground";
-	}
-}
-
-// Steers the on-screen mouse cursor by one tile (or recenters on the selected
-// merc), then narrates what is at the new tile. Driven by the bare numpad
-// 1-9 keys for screen-reader users who cannot see the cursor. The actual
-// engine machinery — pathing preview, AP cost overlay, attack-cursor
-// selection, door menus — keeps running off the OS mouse position, which we
-// warp via SimulateMouseMovement; LocateGridNo scrolls the viewport first
-// so the warp lands inside the window.
-static void AXStepVirtualCursor(INT8 const step_dir, bool const recenter)
-{
-	SOLDIERTYPE const* const sel = GetSelectedMan();
-	GridNo target;
-	if (recenter)
-	{
-		if (!sel) { AX_Say(ST::string("No merc selected")); return; }
-		target = sel->sGridNo;
-	}
-	else
-	{
-		GridNo cur = guiCurrentCursorGridNo;
-		if (cur == NOWHERE)
-		{
-			if (!sel) { AX_Say(ST::string("No merc selected")); return; }
-			cur = sel->sGridNo;
-		}
-		target = NewGridNo(cur, DirectionInc(static_cast<WorldDirections>(step_dir)));
-		if (target == NOWHERE || target == cur)
-		{
-			AX_Say(ST::string("Edge of map"));
-			return;
-		}
-	}
-
-	LocateGridNo(target);
-
-	INT16 sx = 0;
-	INT16 sy = 0;
-	GetGridNoScreenPos(target, static_cast<UINT8>(gsInterfaceLevel), &sx, &sy);
-	SimulateMouseMovement(sx, sy);
-
-	TerrainTypeDefines const terrain = GetTerrainType(target);
-	SOLDIERTYPE const* const occ = WhoIsThere2(target, static_cast<INT8>(gsInterfaceLevel));
-
-	ST::string body;
-	if (occ)
-	{
-		char const* const tail =
-			IsHostileToOurTeam(*occ) ? ", hostile, shoot" : ", merc";
-		body = ST::format("{}{}", occ->name, tail);
-	}
-	else if (DoorAtGridNo(target))
-	{
-		body = ST::string("door, open");
-	}
-	else
-	{
-		body = ST::string("walk");
-	}
-
-	ST::string speech = (gsInterfaceLevel == I_ROOF_LEVEL)
-		? ST::format("roof, {}, {}", AXTerrainName(terrain), body)
-		: ST::format("{}, {}",       AXTerrainName(terrain), body);
-	AX_Say(speech, /*interrupt=*/true);
-}
-
-
 void GetKeyboardInput(UIEventKind* const puiNewEvent)
 {
 	InputAtom InputEvent;
@@ -2504,81 +2383,6 @@ void GetKeyboardInput(UIEventKind* const puiNewEvent)
 			}
 
 			if (gubCheatLevel < cheatCode.size()) RESET_CHEAT_LEVEL();
-
-			// Screen-reader command intercept. Bare backslash is unbound in
-			// tactical/mapscreen/laptop, so we claim it before the modifier
-			// dispatch below.
-			if (key == SDLK_BACKSLASH && mod == 0)
-			{
-				SOLDIERTYPE const* const sel = GetSelectedMan();
-				if (!sel)
-				{
-					AX_Say(ST::string("No merc selected"));
-				}
-				else
-				{
-					AX_Say(ST::format(
-						"{}. Life {}, breath {}, action points {}. Tile {} facing {}. {}",
-						sel->name,
-						sel->bLife, sel->bBreath, sel->bActionPoints,
-						sel->sGridNo, AXDirName(sel->bDirection),
-						GetSectorIDString(gWorldSector, FALSE)));
-				}
-				continue;
-			}
-
-			// Bare numpad: virtual-cursor steering for screen-reader users.
-			// 8/9/6/3/2/1/4/7 step one tile in N/NE/E/SE/S/SW/W/NW; 5
-			// recenters on the selected merc. After warping, narrates the
-			// new tile so the user knows where the cursor is.
-			if (mod == 0)
-			{
-				INT8 step_dir = -1;
-				bool recenter = false;
-				switch (key)
-				{
-					case SDLK_KP_8: step_dir = NORTH;     break;
-					case SDLK_KP_9: step_dir = NORTHEAST; break;
-					case SDLK_KP_6: step_dir = EAST;      break;
-					case SDLK_KP_3: step_dir = SOUTHEAST; break;
-					case SDLK_KP_2: step_dir = SOUTH;     break;
-					case SDLK_KP_1: step_dir = SOUTHWEST; break;
-					case SDLK_KP_4: step_dir = WEST;      break;
-					case SDLK_KP_7: step_dir = NORTHWEST; break;
-					case SDLK_KP_5: recenter = true;      break;
-				}
-				if (step_dir >= 0 || recenter)
-				{
-					AXStepVirtualCursor(step_dir, recenter);
-					continue;
-				}
-			}
-
-			// Bare [ and ] synthesize a left- or right-click at the current
-			// mouse position. The numpad steering above moves the cursor;
-			// these keys fire the action under it. Pushing real SDL mouse
-			// events makes the engine treat this exactly like a physical
-			// click — pathing/walk plan, attack, door open, etc.
-			if (mod == 0 && (key == SDLK_LEFTBRACKET || key == SDLK_RIGHTBRACKET))
-			{
-				Uint8 const sdl_button =
-					key == SDLK_LEFTBRACKET ? SDL_BUTTON_LEFT : SDL_BUTTON_RIGHT;
-
-				SDL_Event ev;
-				SDL_zero(ev);
-				ev.button.type   = SDL_MOUSEBUTTONDOWN;
-				ev.button.button = sdl_button;
-				ev.button.state  = SDL_PRESSED;
-				ev.button.clicks = 1;
-				ev.button.x      = gusMouseXPos;
-				ev.button.y      = gusMouseYPos;
-				SDL_PushEvent(&ev);
-
-				ev.button.type  = SDL_MOUSEBUTTONUP;
-				ev.button.state = SDL_RELEASED;
-				SDL_PushEvent(&ev);
-				continue;
-			}
 
 			switch (mod)
 			{

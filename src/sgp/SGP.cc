@@ -1,4 +1,3 @@
-#include "Accessibility.h"
 #include "AxLog.h"
 #include "Button_System.h"
 #include "Console.h"
@@ -93,7 +92,6 @@ static void shutdownGame()
 	SDL_Quit();
 
 	Console_Shutdown();
-	AX_Shutdown();
 	Ax_LogShutdown();
 }
 
@@ -370,11 +368,6 @@ int main(int argc, char* argv[])
 		////////////////////////////////////////////////////////////
 
 		SDL_Init(SDL_INIT_VIDEO);
-
-		// Bring up the accessibility (screen-reader) output channel before
-		// the rest of init, so any future startup narration has a route.
-		AX_Init();
-		AX_Say("Jagged Alliance 2 starting.");
 
 		// Start the screen-reader command console (separate stdin reader
 		// thread; engine state is touched only from this game thread via

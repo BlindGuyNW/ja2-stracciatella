@@ -12,9 +12,9 @@
  * the engine's public Activate* entry points in PreBattle_Interface. */
 void Cmd_Battle(const std::vector<std::string>& args);
 
-/* Called from InitPreBattleInterface once the dialog is open. Pushes
- * a one-shot AX_Say so the SR user learns the dialog appeared without
- * having to poll, and mirrors the full summary into the transcript. */
+/* Called from InitPreBattleInterface once the dialog is open. Prints
+ * the full summary into the console transcript so the SR user learns
+ * the dialog appeared without having to poll. */
 void Console_AnnouncePreBattle();
 
 #endif // GAME_CONSOLE_BATTLE_H_

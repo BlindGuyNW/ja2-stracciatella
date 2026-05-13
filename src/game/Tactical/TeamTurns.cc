@@ -43,8 +43,9 @@
 // happened outside your input" moment in tactical play. The existing
 // ScreenMsg "Interrupt for X" only lists our interrupters; the camera
 // slide to gLastInterruptedGuy is the sighted analogue for "what set this
-// off". SR users get neither — these hooks fill that gap.
-#include "Accessibility.h"
+// off". SR users get neither — these hooks fill that gap by printing to
+// the screen-reader console.
+#include "Console.h"
 #include "Console_Address.h"
 #include "Console_Visibility.h"
 
@@ -437,12 +438,12 @@ void DisplayHiddenInterrupt( SOLDIERTYPE * pSoldier )
 	{
 		const ST::string offset = formatOffset(
 			gLastInterruptedGuy->sGridNo, pSoldier->sGridNo);
-		AX_Say(ST::format("{} interrupt: {} caught {} at {}.",
+		Console_Println(ST::format("{} interrupt: {} caught {} at {}.",
 			who, label, gLastInterruptedGuy->name, offset));
 	}
 	else
 	{
-		AX_Say(ST::format("{} interrupt: {}.", who, label));
+		Console_Println(ST::format("{} interrupt: {}.", who, label));
 	}
 }
 
@@ -623,7 +624,7 @@ static void StartInterrupt(void)
 		{
 			const ST::string offset = formatOffset(
 				first_interrupter->sGridNo, gLastInterruptedGuy->sGridNo);
-			AX_Say(ST::format("Interrupt: {} caught {} at {}.",
+			Console_Println(ST::format("Interrupt: {} caught {} at {}.",
 				first_interrupter->name, gLastInterruptedGuy->name, offset));
 		}
 

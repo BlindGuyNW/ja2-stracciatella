@@ -53,8 +53,8 @@ namespace DamageLog
 		Cause cause, const SOLDIERTYPE* actor, UINT16 weapon_or_item);
 
 	// Lock destruction by kick (AttemptToSmashDoor success). Bullets
-	// and shaped charges already fire ScreenMsg lines our AX_Say hook
-	// narrates; we still log them for review.
+	// and shaped charges already fire ScreenMsg lines our Console_Println
+	// hook in Message.cc prints; we still log them for review.
 	void PushLockEvent(
 		GridNo gridno, INT8 level, Disposition disp,
 		Cause cause, const SOLDIERTYPE* actor);

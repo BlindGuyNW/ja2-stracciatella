@@ -1,4 +1,3 @@
-#include "Accessibility.h"
 #include "Buffer.h"
 #include "Console.h"
 #include "Debug.h"
@@ -300,7 +299,11 @@ static void TacticalScreenMsg(UINT16 usColor, UINT8 ubPriority, const ST::string
 // new screen message
 void ScreenMsg(UINT16 usColor, UINT8 ubPriority, const ST::string& str)
 {
-	AX_Say(str, /*interrupt=*/false);
+	// Mirror to the screen-reader console. ScreenMsg is the funnel for
+	// ~all in-game scrolling status text (interrupts, NPC quotes, "X ran
+	// out of APs", save confirms, etc.); routing it here gives the SR
+	// user a single transcript without per-call-site duplication.
+	Console_Println(str);
 
 	// pass onto tactical message and mapscreen message
 	TacticalScreenMsg(usColor, ubPriority, str);
@@ -356,13 +359,11 @@ void MapScreenMessage(UINT16 usColor, UINT8 ubPriority, const ST::string& str)
 
 	// MSG_DIALOG carries NPC subtitle text from HandleTacticalNPCTextUI
 	// (Dialogue_Control.cc:929). It's the only subtitle path that *doesn't*
-	// also go through ScreenMsg, so without this hook the SR user hears
-	// nothing during a talkbox conversation. Narrate it the same way
-	// ScreenMsg does — non-interrupting, so quotes don't truncate each
-	// other when several queue at once.
+	// also go through ScreenMsg, so without this hook the SR user sees
+	// nothing in the console during a talkbox conversation.
 	if (ubPriority == MSG_DIALOG)
 	{
-		AX_Say(str, /*interrupt=*/false);
+		Console_Println(str);
 	}
 
 	switch (ubPriority)

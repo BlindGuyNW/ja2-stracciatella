@@ -21,9 +21,9 @@
  *
  * Bullet hits on locks and explosive lock destruction already announce
  * themselves through ScreenMsg (LOCK_HAS_BEEN_HIT / LOCK_HAS_BEEN_DESTROYED
- * in Keys.cc, LOS.cc) which our ScreenMsg->AX_Say hook narrates live;
- * the LOCK kind is for review and for the kick path which does not fire
- * a ScreenMsg in vanilla.
+ * in Keys.cc, LOS.cc) which the ScreenMsg → Console_Println hook in
+ * Message.cc prints live; the LOCK kind is for review and for the kick
+ * path which does not fire a ScreenMsg in vanilla.
  *
  * Capacity is 32 on purpose: this is "what just happened in this
  * fight", not a campaign history. Old records are evicted silently as
